@@ -1,0 +1,80 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.11.0
+2 info using node@v24.14.1
+3 silly config load:file:C:\Program Files\nodejs\node_modules\npm\npmrc
+4 silly config load:file:D:\Synapse\synapse\.npmrc
+5 silly config load:file:C:\Users\MEGA IT SOLUTION\.npmrc
+6 silly config load:file:C:\Users\MEGA IT SOLUTION\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm ci
+8 verbose argv "ci"
+9 verbose logfile logs-max:10 dir:D:\Synapse\synapse\.npm-cache2\_logs\2026-04-20T21_45_47_697Z-
+10 verbose logfile D:\Synapse\synapse\.npm-cache2\_logs\2026-04-20T21_45_47_697Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+13 silly idealTree buildDeps
+14 silly fetch manifest katex@^0.16.22
+15 silly packumentCache full:https://registry.npmjs.org/katex cache-miss
+16 http fetch GET https://registry.npmjs.org/katex attempt 1 failed with ECONNREFUSED
+17 http fetch GET https://registry.npmjs.org/katex attempt 2 failed with ECONNREFUSED
+18 http fetch GET https://registry.npmjs.org/katex attempt 3 failed with ECONNREFUSED
+19 silly fetch manifest react-markdown@^10.1.0
+20 silly packumentCache full:https://registry.npmjs.org/react-markdown cache-miss
+21 http fetch GET https://registry.npmjs.org/react-markdown attempt 1 failed with ECONNREFUSED
+22 http fetch GET https://registry.npmjs.org/react-markdown attempt 2 failed with ECONNREFUSED
+23 http fetch GET https://registry.npmjs.org/react-markdown attempt 3 failed with ECONNREFUSED
+24 silly fetch manifest rehype-katex@^7.0.1
+25 silly packumentCache full:https://registry.npmjs.org/rehype-katex cache-miss
+26 http fetch GET https://registry.npmjs.org/rehype-katex attempt 1 failed with ECONNREFUSED
+27 http fetch GET https://registry.npmjs.org/rehype-katex attempt 2 failed with ECONNREFUSED
+28 http fetch GET https://registry.npmjs.org/rehype-katex attempt 3 failed with ECONNREFUSED
+29 silly fetch manifest remark-gfm@^4.0.1
+30 silly packumentCache full:https://registry.npmjs.org/remark-gfm cache-miss
+31 http fetch GET https://registry.npmjs.org/remark-gfm attempt 1 failed with ECONNREFUSED
+32 http fetch GET https://registry.npmjs.org/remark-gfm attempt 2 failed with ECONNREFUSED
+33 http fetch GET https://registry.npmjs.org/remark-gfm attempt 3 failed with ECONNREFUSED
+34 silly fetch manifest remark-math@^6.0.0
+35 silly packumentCache full:https://registry.npmjs.org/remark-math cache-miss
+36 http fetch GET https://registry.npmjs.org/remark-math attempt 1 failed with ECONNREFUSED
+37 http fetch GET https://registry.npmjs.org/remark-math attempt 2 failed with ECONNREFUSED
+38 http fetch GET https://registry.npmjs.org/remark-math attempt 3 failed with ECONNREFUSED
+39 silly placeDep ROOT katex@ OK for: synapse-web@0.1.0 want: ^0.16.22
+40 silly placeDep ROOT react-markdown@ OK for: synapse-web@0.1.0 want: ^10.1.0
+41 silly placeDep ROOT rehype-katex@ OK for: synapse-web@0.1.0 want: ^7.0.1
+42 silly placeDep ROOT remark-gfm@ OK for: synapse-web@0.1.0 want: ^4.0.1
+43 silly placeDep ROOT remark-math@ OK for: synapse-web@0.1.0 want: ^6.0.0
+44 verbose type system
+45 verbose stack FetchError: request to https://registry.npmjs.org/katex failed, reason: connect ECONNREFUSED 127.0.0.1:9
+45 verbose stack     at ClientRequest.<anonymous> (C:\Program Files\nodejs\node_modules\npm\node_modules\minipass-fetch\lib\index.js:130:14)
+45 verbose stack     at ClientRequest.emit (node:events:508:28)
+45 verbose stack     at emitErrorEvent (node:_http_client:108:11)
+45 verbose stack     at _destroy (node:_http_client:963:9)
+45 verbose stack     at onSocketNT (node:_http_client:983:5)
+45 verbose stack     at process.processTicksAndRejections (node:internal/process/task_queues:91:21)
+46 error code ECONNREFUSED
+47 error syscall connect
+48 error errno ECONNREFUSED
+49 error FetchError: request to https://registry.npmjs.org/katex failed, reason: connect ECONNREFUSED 127.0.0.1:9
+49 error     at ClientRequest.<anonymous> (C:\Program Files\nodejs\node_modules\npm\node_modules\minipass-fetch\lib\index.js:130:14)
+49 error     at ClientRequest.emit (node:events:508:28)
+49 error     at emitErrorEvent (node:_http_client:108:11)
+49 error     at _destroy (node:_http_client:963:9)
+49 error     at onSocketNT (node:_http_client:983:5)
+49 error     at process.processTicksAndRejections (node:internal/process/task_queues:91:21) {
+49 error   code: 'ECONNREFUSED',
+49 error   errno: 'ECONNREFUSED',
+49 error   syscall: 'connect',
+49 error   address: '127.0.0.1',
+49 error   port: 9,
+49 error   type: 'system',
+49 error   requiredBy: '.'
+49 error }
+50 error
+50 error If you are behind a proxy, please make sure that the
+50 error 'proxy' config is set properly.  See: 'npm help config'
+51 verbose cwd D:\Synapse\synapse
+52 verbose os Windows_NT 10.0.26200
+53 verbose node v24.14.1
+54 verbose npm  v11.11.0
+55 verbose exit 1
+56 verbose code 1
+57 error A complete log of this run can be found in: D:\Synapse\synapse\.npm-cache2\_logs\2026-04-20T21_45_47_697Z-debug-0.log

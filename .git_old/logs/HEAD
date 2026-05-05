@@ -1,0 +1,14 @@
+0000000000000000000000000000000000000000 4a89c0971280c15136479e66e2ea2a39ddf8f886 codera647 <codera647@gmail.com> 1775717856 +0500	commit (initial): first commit
+4a89c0971280c15136479e66e2ea2a39ddf8f886 6aeda16e76706b28e286d05636e5cadc4bc44d5d codera647 <codera647@gmail.com> 1775908871 +0500	commit: OAuth issues resolved
+6aeda16e76706b28e286d05636e5cadc4bc44d5d cc54a78ed06ba843859d5f968dc260ea583c9e7e codera647 <codera647@gmail.com> 1775931290 +0500	commit: sync-layer-fix
+cc54a78ed06ba843859d5f968dc260ea583c9e7e e80eca91a104339a591d9029e519ad97ae02cdd4 codera647 <codera647@gmail.com> 1775968405 +0500	commit: batch-processing
+e80eca91a104339a591d9029e519ad97ae02cdd4 5fc6f8fbe28843f03abc681560faad251819c149 codera647 <codera647@gmail.com> 1775968494 +0500	commit: schema-fixes
+5fc6f8fbe28843f03abc681560faad251819c149 6aeda16e76706b28e286d05636e5cadc4bc44d5d codera647 <codera647@gmail.com> 1775968739 +0500	reset: moving to origin/master
+6aeda16e76706b28e286d05636e5cadc4bc44d5d 27578ced7194ddf05deebc96227773e199e9cebe codera647 <codera647@gmail.com> 1775968750 +0500	commit: phase-1 pipeline + auth fixes (no secrets)
+27578ced7194ddf05deebc96227773e199e9cebe 2eb8dfff7e5595e08c0a08f262356b8c40a3a114 codera647 <codera647@gmail.com> 1775978954 +0500	commit: layout-parser
+2eb8dfff7e5595e08c0a08f262356b8c40a3a114 d7db82339759c6b3ca07398dab88290dbc289810 codera647 <codera647@gmail.com> 1775980034 +0500	commit: JSON-issues-fixes
+d7db82339759c6b3ca07398dab88290dbc289810 38af26e7d914173ee69577495b4882bac60feb9e codera647 <codera647@gmail.com> 1776261198 +0500	commit: parsing-layer-issues-resolved
+38af26e7d914173ee69577495b4882bac60feb9e 7cbcf4490d84517cbd730dda3727a93c6aab6545 codera647 <codera647@gmail.com> 1776599394 +0500	commit: Adding extraction,caption and chunking layers
+7cbcf4490d84517cbd730dda3727a93c6aab6545 5e577ea04857412da59d90ab15d01dc7ab771b48 codera647 <codera647@gmail.com> 1776723917 +0500	commit: Chat-pannel
+5e577ea04857412da59d90ab15d01dc7ab771b48 f276618b1378ed73f7c7b838b0662c1616ef21f6 codera647 <codera647@gmail.com> 1777994168 +0500	commit: backend changes
+f276618b1378ed73f7c7b838b0662c1616ef21f6 552063d32cf0816a0e52a42a44375cbc3dc4ecd7 codera647 <codera647@gmail.com> 1777995951 +0500	commit: error resolved

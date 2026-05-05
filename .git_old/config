@@ -1,0 +1,17 @@
+[core]
+	repositoryformatversion = 0
+	filemode = false
+	bare = false
+	logallrefupdates = true
+	symlinks = false
+	ignorecase = true
+[branch "master"]
+	vscode-merge-base = origin/master
+[extensions]
+	worktreeConfig = true
+[user]
+	name = codera647
+	email = codera647@gmail.com
+[remote "origin"]
+	url = https://github.com/codera647/synapse.git
+	fetch = +refs/heads/*:refs/remotes/origin/*
