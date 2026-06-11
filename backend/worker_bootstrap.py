@@ -2,6 +2,7 @@
 import os
 import time
 import signal
+import tempfile
 import multiprocessing as mp
 from env_bootstrap import load_env
 from hardware import auto_worker_plan
@@ -16,7 +17,10 @@ from sync_worker import (
 load_env()
 
 _POOL_STARTED = False
-_POOL_LOCK_PATH = os.getenv("WORKER_POOL_LOCK", "/tmp/synapse_worker_pool.lock")
+# Cross-platform default (Colab hardcoded /tmp); still overridable via WORKER_POOL_LOCK.
+_POOL_LOCK_PATH = os.getenv("WORKER_POOL_LOCK") or os.path.join(
+    tempfile.gettempdir(), "synapse_worker_pool.lock"
+)
 
 
 def _pid_alive(pid: int) -> bool:

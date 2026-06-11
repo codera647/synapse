@@ -1,22 +1,38 @@
 [Unit]
 Description=Synapse Backend (FastAPI + worker pool)
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=ubuntu
-WorkingDirectory=/opt/synapse
 
-# Store secrets/env outside the repo (recommended).
+# Adjust to your host. On GCP Ubuntu the default login user varies; the AWS
+# Ubuntu AMI uses "ubuntu".
+User=ubuntu
+Group=ubuntu
+
+# Repo layout: /opt/synapse is the repo root; the backend lives in backend/.
+# WorkingDirectory MUST be the backend/ dir because modules use flat imports
+# (e.g. `from hardware import ...`), so uvicorn is launched as `app:app`.
+WorkingDirectory=/opt/synapse/backend
+
+# Secrets/config live outside the repo and are injected as environment.
 EnvironmentFile=/etc/synapse/backend.env
 
-# Prevent Python from buffering logs.
+# Unbuffered logs + a stable HuggingFace model cache on disk (download once,
+# survive restarts instead of re-downloading like Colab did every session).
 Environment=PYTHONUNBUFFERED=1
+Environment=HF_HOME=/opt/synapse/.hf-cache
 
-ExecStart=/opt/synapse/.venv/bin/uvicorn backend.app:app --host 0.0.0.0 --port 8000
+# Launch uvicorn from the venv, pointing at app:app (NOT backend.app:app).
+ExecStart=/opt/synapse/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000
+
 Restart=always
 RestartSec=3
 
+# Give the worker pool time to stop its child processes cleanly on shutdown.
+TimeoutStopSec=30
+KillMode=mixed
+
 [Install]
 WantedBy=multi-user.target
-

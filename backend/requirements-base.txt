@@ -1,0 +1,40 @@
+# Synapse backend — BASE requirements (CPU-safe).
+# These run the FastAPI API + all workers EXCEPT the GPU model dependencies.
+# Install on every host:   pip install -r requirements-base.txt
+# Then add GPU deps:       pip install -r requirements-gpu.txt   (on the GPU host)
+
+# --- Core API ---
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+pydantic>=2.6,<3.0
+python-dotenv>=1.0,<2.0
+
+# --- Supabase + HTTP ---
+supabase>=2.6,<3.0
+postgrest>=0.16
+httpx>=0.27,<1.0
+requests>=2.31,<3.0          # used by sync_worker (Google Drive / token refresh)
+
+# --- Object storage (S3 / R2) ---
+boto3>=1.34,<2.0
+
+# --- PDFs + images ---
+PyMuPDF>=1.24,<2.0           # imported as `fitz`
+pillow>=10.3
+numpy>=1.26,<3.0
+
+# --- OCR (CPU) ---
+pytesseract>=0.3.10          # requires the system `tesseract-ocr` binary (apt install)
+
+# --- RAG / embeddings / rerank ---
+sentence-transformers>=3.0,<4.0   # pulls transformers; used for BGE embeddings + CrossEncoder rerank
+scikit-learn>=1.4,<2.0            # imported as `sklearn` (clustering)
+
+# --- Chat (OpenAI API; no local GPU) ---
+openai>=1.25,<2.0
+
+# --- HF hub (model downloads/caching) ---
+huggingface_hub>=0.23
+
+# --- System metrics (worker planning) ---
+psutil>=5.9

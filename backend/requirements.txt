@@ -1,31 +1,11 @@
-# Core API
-fastapi>=0.110
-uvicorn[standard]>=0.29
-python-dotenv>=1.0
-pydantic>=2.6
-
-# Supabase + HTTP
-supabase>=2.6
-postgrest>=0.16
-httpx>=0.27
-
-# Storage + PDFs + Images
-boto3>=1.34
-PyMuPDF>=1.24
-pillow>=10.3
-numpy>=1.26
-
-# RAG / Embeddings / Rerank
-sentence-transformers>=3.0
-scikit-learn>=1.4
-
-# Optional (used by some workers; safe to keep installed)
-openai>=1.25
-huggingface_hub>=0.23
-
-# If you use DocLayout-YOLO / Surya / Qwen locally on EC2 GPU, you'll also need:
-# - torch + torchvision (CUDA build)
-# - doclayout-yolo
-# - surya-ocr
-# Those are installed separately on GPU hosts to match CUDA versions.
-
+# DEPRECATED — requirements are now split for clean GPU deployment:
+#
+#   requirements-base.txt   CPU-safe: API + workers (install everywhere)
+#   requirements-gpu.txt    GPU-only: torch / doclayout-yolo / surya / transformers
+#
+# Install:
+#   pip install -r requirements-base.txt
+#   pip install -r requirements-gpu.txt    # on the GPU host (after installing torch)
+#
+# This file is kept only so existing scripts that reference it still resolve.
+-r requirements-base.txt

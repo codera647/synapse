@@ -1,0 +1,28 @@
+# Synapse backend — GPU requirements.
+# Install ONLY on the GPU host, AFTER requirements-base.txt.
+#
+# IMPORTANT: torch/torchvision must match the host CUDA build. Install torch FIRST
+# from the correct CUDA index, then the rest. Example for CUDA 12.1:
+#
+#   pip install torch==2.4.* torchvision==0.19.* --index-url https://download.pytorch.org/whl/cu121
+#   pip install -r requirements-gpu.txt
+#
+# (On a GCP "Deep Learning VM" image, a compatible torch may already be present —
+#  check `python -c "import torch; print(torch.__version__, torch.cuda.is_available())"`
+#  before reinstalling.)
+
+# torch / torchvision are intentionally NOT pinned here because the correct wheel
+# depends on the host CUDA version (see note above). Install them separately.
+
+# --- Document layout detection ---
+doclayout-yolo>=0.0.3        # imported as `doclayout_yolo`
+
+# --- OCR (GPU-accelerated, optional engine; Tesseract remains the CPU fallback) ---
+surya-ocr>=0.4               # imported as `surya`
+
+# --- Vision-language captioning (Qwen2-VL / GLM-OCR) ---
+transformers>=4.45,<5.0      # Qwen2VLForConditionalGeneration needs a recent transformers
+accelerate>=0.30             # required for device_map="auto" model loading
+
+# --- Image ops occasionally used by GPU paths ---
+# (pillow / numpy already pinned in requirements-base.txt)

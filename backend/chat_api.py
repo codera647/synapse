@@ -36,7 +36,7 @@ class CompactRequest(BaseModel):
 def _get_openai_client():
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
-        raise RuntimeError("Missing OPENAI_API_KEY in /workspace/.env")
+        raise RuntimeError("Missing OPENAI_API_KEY (set it in the backend env file)")
     from openai import OpenAI  # type: ignore
 
     return OpenAI(api_key=api_key)
