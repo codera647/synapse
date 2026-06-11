@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
+import GradientBackground from "@/components/GradientBackground";
 import { FiChevronDown } from "react-icons/fi";
 
 export default function NewOrganizationPage() {
@@ -87,147 +88,106 @@ export default function NewOrganizationPage() {
     };
 
     return (
-        <div
-            className="min-h-screen flex flex-col"
-            style={{ backgroundColor: "var(--bg-primary)", color: "var(--text-primary)" }}
-        >
+        <div className="relative min-h-screen flex flex-col overflow-hidden">
+            <GradientBackground />
+
             {/* Simple header */}
-            <header
-                className="w-full border-b border-white/10 flex items-center justify-between px-6 h-14"
-                style={{ backgroundColor: "var(--bg-secondary)" }}
-            >
-                <div className="flex items-center gap-2">
-                    <Image
-                        src="/logo.png"
-                        alt="Synapse logo"
-                        width={28}
-                        height={28}
-                        className="rounded-md"
-                    />
-                    <span className="text-gray-400 mx-2">/</span>
-                    <span className="text-gray-100 text-sm font-medium">New organization</span>
+            <header className="w-full surface-app border-b border-white/10 flex items-center justify-between px-6 h-14 backdrop-blur-xl">
+                <div className="flex items-center gap-2.5">
+                    <Image src="/logo.png" alt="Synapse" width={28} height={28} className="h-7 w-7" />
+                    <span className="text-white/25 font-light">/</span>
+                    <span className="text-white/85 text-sm font-medium">New organization</span>
                 </div>
             </header>
 
             {/* Main content */}
             <main className="flex-1 flex items-start justify-center pt-16 px-4">
-                <div
-                    className="w-full max-w-xl rounded-2xl p-8"
-                    style={{
-                        backgroundColor: "var(--bg-secondary)",
-                        border: "1px solid var(--border-color-subtle)",
-                    }}
-                >
-                    <h1 className="text-xl font-semibold text-gray-100">
-                        Create a new organization
-                    </h1>
-                    <p className="mt-2 text-sm text-gray-400">
-                        Organizations are a way to group your projects. Each organization can be
-                        configured with different team members and billing settings.
-                    </p>
+                <div className="relative w-full max-w-xl">
+                    <div className="pointer-events-none absolute -inset-6 rounded-[2rem] bg-gradient-to-tr from-violet-600/20 via-fuchsia-500/12 to-blue-500/15 blur-2xl" />
+                    <div className="relative w-full rounded-3xl glass-strong glass-hi p-8 shadow-2xl shadow-black/50">
+                        <h1 className="text-2xl font-bold tracking-tight text-white">
+                            Create a new <span className="gradient-text">organization</span>
+                        </h1>
+                        <p className="mt-2 text-sm text-white/55">
+                            Organizations group your projects, team members, and billing.
+                        </p>
 
-                    {/* Form */}
-                    <div className="mt-8 space-y-6">
-                        {/* Name */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-300 mb-2">
-                                Name
-                            </label>
-                            <input
-                                type="text"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                placeholder="Organization name"
-                                className="w-full rounded-lg px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-[#b87fd9]"
-                                style={{
-                                    backgroundColor: "var(--bg-primary)",
-                                    border: "1px solid var(--border-color-subtle)",
-                                    color: "var(--text-primary)",
-                                }}
-                            />
-                            <p className="mt-1.5 text-xs text-gray-500">
-                                What's the name of your company or team? You can change this later.
-                            </p>
-                        </div>
-
-                        {/* Type */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-300 mb-2">
-                                Type
-                            </label>
-                            <div className="relative">
-                                <select
-                                    value={orgType}
-                                    onChange={(e) => setOrgType(e.target.value)}
-                                    className="w-full rounded-lg px-4 py-3 text-sm outline-none appearance-none cursor-pointer focus:ring-1 focus:ring-[#b87fd9]"
-                                    style={{
-                                        backgroundColor: "var(--bg-primary)",
-                                        border: "1px solid var(--border-color-subtle)",
-                                        color: "var(--text-primary)",
-                                    }}
-                                >
-                                    <option value="personal">Personal</option>
-                                    <option value="team">Team</option>
-                                    <option value="enterprise">Enterprise</option>
-                                </select>
-                                <FiChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                        {/* Form */}
+                        <div className="mt-8 space-y-6">
+                            {/* Name */}
+                            <div>
+                                <label className="block text-sm font-medium text-white/75 mb-2">Name</label>
+                                <input
+                                    type="text"
+                                    value={name}
+                                    onChange={(e) => setName(e.target.value)}
+                                    placeholder="Organization name"
+                                    className="w-full rounded-xl bg-white/5 border border-white/12 px-4 py-3 text-sm text-white outline-none transition-all focus:border-violet-400/60 focus:ring-2 focus:ring-violet-500/20 placeholder:text-white/35"
+                                />
+                                <p className="mt-1.5 text-xs text-white/40">
+                                    The name of your company or team. You can change this later.
+                                </p>
                             </div>
-                            <p className="mt-1.5 text-xs text-gray-500">
-                                What best describes your organization?
-                            </p>
-                        </div>
 
-                        {/* Plan */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-300 mb-2">
-                                Plan
-                            </label>
-                            <div className="relative">
-                                <select
-                                    value={plan}
-                                    onChange={(e) => setPlan(e.target.value)}
-                                    className="w-full rounded-lg px-4 py-3 text-sm outline-none appearance-none cursor-pointer focus:ring-1 focus:ring-[#b87fd9]"
-                                    style={{
-                                        backgroundColor: "var(--bg-primary)",
-                                        border: "1px solid var(--border-color-subtle)",
-                                        color: "var(--text-primary)",
-                                    }}
-                                >
-                                    <option value="free">Free - $0/month</option>
-                                    <option value="pro">Pro - $20/month</option>
-                                    <option value="enterprise">Enterprise - Contact us</option>
-                                </select>
-                                <FiChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                            {/* Type */}
+                            <div>
+                                <label className="block text-sm font-medium text-white/75 mb-2">Type</label>
+                                <div className="relative">
+                                    <select
+                                        value={orgType}
+                                        onChange={(e) => setOrgType(e.target.value)}
+                                        style={{ colorScheme: "dark" }}
+                                        className="w-full rounded-xl bg-white/5 border border-white/12 px-4 py-3 text-sm text-white outline-none appearance-none cursor-pointer transition-all focus:border-violet-400/60 focus:ring-2 focus:ring-violet-500/20"
+                                    >
+                                        <option value="personal" className="bg-[#13112a] text-white">Personal</option>
+                                        <option value="team" className="bg-[#13112a] text-white">Team</option>
+                                        <option value="enterprise" className="bg-[#13112a] text-white">Enterprise</option>
+                                    </select>
+                                    <FiChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 pointer-events-none" />
+                                </div>
+                                <p className="mt-1.5 text-xs text-white/40">What best describes your organization?</p>
                             </div>
-                            <p className="mt-1.5 text-xs text-gray-500">
-                                Which plan fits your organization's needs best?{" "}
-                                <a href="#" className="text-[#b87fd9] hover:underline">
-                                    Learn more
-                                </a>
-                                .
-                            </p>
-                        </div>
 
-                        {/* Error message */}
-                        {error && (
-                            <p className="text-sm text-red-400">{error}</p>
-                        )}
+                            {/* Plan */}
+                            <div>
+                                <label className="block text-sm font-medium text-white/75 mb-2">Plan</label>
+                                <div className="relative">
+                                    <select
+                                        value={plan}
+                                        onChange={(e) => setPlan(e.target.value)}
+                                        style={{ colorScheme: "dark" }}
+                                        className="w-full rounded-xl bg-white/5 border border-white/12 px-4 py-3 text-sm text-white outline-none appearance-none cursor-pointer transition-all focus:border-violet-400/60 focus:ring-2 focus:ring-violet-500/20"
+                                    >
+                                        <option value="free" className="bg-[#13112a] text-white">Free - $0/month</option>
+                                        <option value="pro" className="bg-[#13112a] text-white">Pro - $20/month</option>
+                                        <option value="enterprise" className="bg-[#13112a] text-white">Enterprise - Contact us</option>
+                                    </select>
+                                    <FiChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 pointer-events-none" />
+                                </div>
+                                <p className="mt-1.5 text-xs text-white/40">
+                                    Which plan fits best?{" "}
+                                    <a href="#" className="text-violet-300 hover:underline">Learn more</a>.
+                                </p>
+                            </div>
 
-                        {/* Buttons */}
-                        <div className="flex items-center gap-3 pt-4">
-                            <button
-                                onClick={() => router.back()}
-                                className="rounded-lg border border-white/20 bg-transparent px-4 py-2 text-sm font-medium text-gray-300 hover:bg-white/5 transition-all"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleCreate}
-                                disabled={loading}
-                                className="rounded-lg bg-[#3b82f6] hover:bg-[#2563eb] px-4 py-2 text-sm font-medium text-white shadow-md transition-all disabled:opacity-60"
-                            >
-                                {loading ? "Creating..." : "Create organization"}
-                            </button>
+                            {error && <p className="text-sm text-rose-400">{error}</p>}
+
+                            {/* Buttons */}
+                            <div className="flex items-center gap-3 pt-4">
+                                <button
+                                    onClick={() => router.back()}
+                                    className="rounded-xl glass hover-glow px-5 py-2.5 text-sm font-medium text-white/80 transition-all"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleCreate}
+                                    disabled={loading}
+                                    className="btn-grad rounded-xl px-5 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+                                >
+                                    {loading ? "Creating..." : "Create organization"}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

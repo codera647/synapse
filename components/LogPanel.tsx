@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { FiChevronDown, FiTrash2, FiCopy } from "react-icons/fi";
+import { FiChevronDown, FiTrash2, FiCopy, FiTerminal } from "react-icons/fi";
 import type { LogEntry, LogLevel } from "@/context/LogContext";
 
 function formatTime(ts: number) {
@@ -202,36 +202,33 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
   return (
     <div
       ref={panelRef}
-      className="fixed bottom-0 left-14 right-0 z-50"
+      className="fixed bottom-0 left-16 right-0 z-50"
       style={{ height }}
     >
       <div
-        className="h-full border-t border-white/10 shadow-[0_-10px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl"
-        style={{
-          background:
-            "linear-gradient(180deg, rgba(18,24,39,0.92) 0%, rgba(14,18,30,0.96) 55%, rgba(11,15,26,0.98) 100%)",
-        }}
+        className="h-full flex flex-col border-t border-white/12 shadow-[0_-20px_70px_rgba(0,0,0,0.6)] backdrop-blur-2xl"
+        style={{ background: "rgba(10, 9, 20, 0.94)" }}
       >
         {/* Drag handle */}
         <div
-          className="relative h-6 cursor-ns-resize"
+          className="group relative h-5 shrink-0 cursor-ns-resize"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
         >
-          <div className="absolute left-1/2 top-1/2 h-1 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/15" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(184,127,217,0.18),transparent_55%)]" />
+          <div className="absolute left-1/2 top-1/2 h-1 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/15 transition-colors group-hover:bg-violet-400/50" />
         </div>
 
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 px-4 pb-2">
-          <div className="flex items-center gap-3">
-            <div className="text-[11px] tracking-[0.22em] uppercase text-gray-400">
-              Console
-            </div>
-            <div className="text-[10px] text-gray-500">
+        <div className="flex items-center justify-between gap-3 px-4 pb-2.5 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <span className="grid place-items-center h-7 w-7 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500">
+              <FiTerminal className="h-3.5 w-3.5 text-white" />
+            </span>
+            <span className="text-sm font-semibold text-white">Console</span>
+            <span className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] text-white/55">
               {logs.length} events
-            </div>
+            </span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -239,17 +236,17 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Filter logs"
-              className="hidden sm:block w-48 rounded-md bg-white/5 border border-white/10 px-2 py-1 text-xs text-gray-100 placeholder:text-gray-500 focus:outline-none focus:border-white/20"
+              className="hidden sm:block w-48 rounded-lg bg-white/5 border border-white/12 px-2.5 py-1.5 text-xs text-white placeholder:text-white/40 outline-none transition-colors focus:border-violet-400/50"
               style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace" }}
             />
 
-            <div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/4 p-0.5">
+            <div className="flex items-center gap-0.5 rounded-lg glass p-0.5">
               {(["all", "pipeline", "errors"] as const).map((k) => (
                 <button
                   key={k}
                   type="button"
                   onClick={() => setFilter(k)}
-                  className={`rounded-md px-2 py-1 text-[11px] transition-colors ${filter === k ? "bg-white/10 text-gray-100" : "text-gray-400 hover:text-gray-100"}`}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${filter === k ? "bg-gradient-to-r from-violet-500/40 to-fuchsia-500/30 text-white" : "text-white/50 hover:text-white"}`}
                 >
                   {k === "all" ? "All" : k === "pipeline" ? "Pipeline" : "Errors"}
                 </button>
@@ -261,10 +258,10 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
               <button
                 type="button"
                 onClick={() => setLibraryFilter("all")}
-                className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] transition-colors ${
                   libraryFilter === "all"
-                    ? "border-white/20 bg-white/10 text-gray-100"
-                    : "border-white/10 bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white"
+                    ? "bg-white/12 text-white"
+                    : "bg-white/5 text-white/55 hover:bg-white/10 hover:text-white"
                 }`}
                 title="Show logs for all libraries"
               >
@@ -275,10 +272,10 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
                   key={l.id}
                   type="button"
                   onClick={() => setLibraryFilter(l.id)}
-                  className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                  className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] transition-colors ${
                     libraryFilter === l.id
-                      ? "border-[#b87fd9]/50 bg-[#884ab4]/25 text-gray-100"
-                      : "border-white/10 bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white"
+                      ? "bg-gradient-to-r from-violet-500/35 to-fuchsia-500/25 text-white ring-1 ring-violet-400/40"
+                      : "bg-white/5 text-white/55 hover:bg-white/10 hover:text-white"
                   }`}
                   title="Filter logs to this library"
                 >
@@ -291,7 +288,7 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
               <button
                 type="button"
                 onClick={() => setPipelineView((v) => !v)}
-                className={`rounded-md border border-white/10 px-2 py-1 text-[11px] transition-colors ${pipelineView ? "bg-white/10 text-gray-100" : "bg-white/5 text-gray-300 hover:text-white hover:bg-white/10"}`}
+                className={`rounded-lg px-2.5 py-1.5 text-[11px] glass transition-colors ${pipelineView ? "text-white" : "text-white/55 hover:text-white"}`}
                 title="Toggle grouped pipeline view"
               >
                 {pipelineView ? "Timeline" : "Grouped"}
@@ -301,7 +298,7 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
             <button
               type="button"
               onClick={copy}
-              className="rounded-md border border-white/10 bg-white/5 p-2 text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
+              className="grid place-items-center h-8 w-8 rounded-lg glass text-white/55 hover:text-white transition-colors"
               title="Copy filtered logs as JSON"
             >
               <FiCopy className="h-4 w-4" />
@@ -310,7 +307,7 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
             <button
               type="button"
               onClick={onClear}
-              className="rounded-md border border-white/10 bg-white/5 p-2 text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
+              className="grid place-items-center h-8 w-8 rounded-lg glass text-white/55 hover:text-white transition-colors"
               title="Clear"
             >
               <FiTrash2 className="h-4 w-4" />
@@ -319,7 +316,7 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
             <button
               type="button"
               onClick={onClose}
-              className="rounded-md border border-white/10 bg-white/5 p-2 text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
+              className="grid place-items-center h-8 w-8 rounded-lg glass text-white/55 hover:text-white transition-colors"
               title="Hide"
             >
               <FiChevronDown className="h-4 w-4" />
@@ -328,7 +325,7 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
         </div>
 
         {/* Body */}
-        <div className="h-[calc(100%-56px)] overflow-auto px-2 pb-3">
+        <div className="synapse-scroll flex-1 min-h-0 overflow-auto px-2 pb-3">
           {filter === "pipeline" && pipelineView ? (
             <div className="px-2 pb-3">
               {pipelineStages.map((st) => {
@@ -338,10 +335,10 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
                 const running = items.filter((i) => getStr(asRecord(i.details), "status") === "running").length;
                 const queued = items.filter((i) => getStr(asRecord(i.details), "status") === "queued").length;
                 return (
-                  <div key={st} className="mb-3 rounded-xl border border-white/10 bg-white/3">
-                    <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/8">
-                      <div className="text-xs font-medium text-gray-200">{st}</div>
-                      <div className="text-[11px] text-gray-500">
+                  <div key={st} className="mb-3 rounded-xl glass overflow-hidden">
+                    <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/8 bg-white/4">
+                      <div className="text-xs font-semibold text-white capitalize">{st.replace(/_/g, " ")}</div>
+                      <div className="text-[11px] text-white/45">
                         {items.length} · {failed ? `${failed} failed` : "0 failed"} · {running ? `${running} running` : "0 running"} · {queued ? `${queued} queued` : "0 queued"}
                       </div>
                     </div>
@@ -392,17 +389,17 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
               })}
 
               {pipelineLive.live.length === 0 && (
-                <div className="px-4 py-10 text-sm text-gray-500">No pipeline jobs yet.</div>
+                <div className="px-4 py-10 text-center text-sm text-white/40">No pipeline jobs yet.</div>
               )}
             </div>
           ) : filtered.length === 0 ? (
-            <div className="px-4 py-10 text-sm text-gray-500">No logs to show.</div>
+            <div className="px-4 py-10 text-center text-sm text-white/40">No logs to show.</div>
           ) : (
             <div className="space-y-1 px-2">
               {filtered.slice(-800).map((l) => {
                 const isExpanded = expanded.has(l.id);
                 return (
-                  <div key={l.id} className="rounded-lg border border-white/8 bg-white/3 hover:bg-white/5 transition-colors">
+                  <div key={l.id} className="rounded-lg glass hover:bg-white/8 transition-colors">
                     <button
                       type="button"
                       onClick={() =>

@@ -68,116 +68,100 @@ export default function DashboardNavbar({
     }, []);
 
     return (
-        <header
-            className="w-full border-b border-white/10 flex items-center justify-between px-6 h-14 relative z-20"
-            style={{ backgroundColor: "var(--bg-secondary)" }}
-        >
+        <header className="w-full surface-app border-b border-white/10 flex items-center justify-between px-4 sm:px-6 h-14 relative z-30 backdrop-blur-xl">
             {/* LEFT — Logo + Org selector */}
             <div className="flex items-center gap-3 relative" ref={orgMenuRef}>
-                <div className="flex items-center gap-3">
-                    <Image
-                        src="/logo.png"
-                        alt="Synapse logo"
-                        width={36}
-                        height={36}
-                        className="rounded-md"
-                    />
-
-                    <span className="text-gray-500 text-lg">/</span>
+                <div className="flex items-center gap-2.5">
+                    <Image src="/logo.png" alt="Synapse" width={32} height={32} className="h-8 w-8" />
+                    <span className="hidden sm:block text-white/25 text-lg font-light">/</span>
 
                     <button
                         onClick={() => {
                             setOpenOrgMenu((v) => !v);
                             setOpenProfileMenu(false);
                         }}
-                        className="flex items-center gap-1 text-sm text-gray-100 hover:bg-white/5 px-2 py-1 rounded-lg transition-all group"
+                        className="flex items-center gap-1.5 text-sm text-white/90 hover:bg-white/8 px-2.5 py-1.5 rounded-lg transition-all group"
                     >
-                        <span className="font-medium">{displayName}</span>
-                        <FiChevronDown className="w-3 h-3 text-gray-400 group-hover:text-gray-200 transition-colors" />
+                        <span className="font-medium max-w-[10rem] truncate">{displayName}</span>
+                        <FiChevronDown className={`w-3.5 h-3.5 text-white/40 group-hover:text-white/70 transition-transform ${openOrgMenu ? "rotate-180" : ""}`} />
                     </button>
                 </div>
 
-                <span className="text-[10px] px-2 py-[3px] rounded-full bg-gray-700/50 text-gray-300">
+                <span className="text-[10px] font-semibold px-2 py-[3px] rounded-full bg-violet-500/15 text-violet-300 border border-violet-400/20">
                     FREE
                 </span>
 
                 {openOrgMenu && (
-                    <div className="absolute top-10 left-0 w-72 rounded-xl border border-white/10 bg-[#05060C] shadow-2xl shadow-black/60 overflow-hidden">
-                        <div className="flex items-center px-3 py-2 bg-black/40 border-b border-white/5">
-                            <FiSearch className="w-4 h-4 text-gray-500 mr-2" />
+                    <div className="absolute top-12 left-0 w-72 rounded-2xl surface-menu overflow-hidden z-[60]">
+                        <div className="flex items-center px-3 py-2.5 border-b border-white/8">
+                            <FiSearch className="w-4 h-4 text-white/40 mr-2" />
                             <input
                                 placeholder="Find organization..."
-                                className="bg-transparent outline-none border-none text-xs text-gray-100 placeholder:text-gray-500 w-full"
+                                className="bg-transparent outline-none border-none text-xs text-white/90 placeholder:text-white/40 w-full"
                             />
                         </div>
 
-                        <button className="w-full flex items-center justify-between px-4 py-3 text-sm bg-white/5 text-gray-100">
-                            <span>{displayName}</span>
-                            <FiCheck className="w-4 h-4 text-[#b87fd9]" />
-                        </button>
+                        <div className="p-1.5">
+                            <button className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm bg-white/5 text-white/90">
+                                <span className="truncate">{displayName}</span>
+                                <FiCheck className="w-4 h-4 text-violet-300 shrink-0" />
+                            </button>
 
-                        <button
-                            className="w-full text-left px-4 py-3 text-sm text-gray-300 hover:bg-white/5"
-                            onClick={() => setShowAllOrgs((v) => !v)}
-                        >
-                            All organizations
-                        </button>
+                            <button
+                                className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-white/70 hover:bg-white/8 transition-colors"
+                                onClick={() => setShowAllOrgs((v) => !v)}
+                            >
+                                All organizations
+                            </button>
 
-                        {showAllOrgs && (
-                            <div className="border-t border-white/5">
-                                {organizations.length === 0 ? (
-                                    <div className="px-4 py-3 text-xs text-gray-500">
-                                        No organizations found.
-                                    </div>
-                                ) : (
-                                    organizations.map((org) => (
-                                        <button
-                                            key={org.id}
-                                            className={`w-full flex items-center justify-between px-4 py-2 text-sm ${
-                                                org.id === currentOrgId
-                                                    ? "text-gray-100 bg-white/5"
-                                                    : "text-gray-300"
-                                            }`}
-                                            onClick={() => {
-                                                if (org.id !== currentOrgId) {
-                                                    onSelectOrg?.(org.id);
-                                                }
-                                                setOpenOrgMenu(false);
-                                                setShowAllOrgs(false);
-                                            }}
-                                        >
-                                            <span>{org.name}</span>
-                                            {org.id === currentOrgId && (
-                                                <FiCheck className="w-4 h-4 text-[#b87fd9]" />
-                                            )}
-                                        </button>
-                                    ))
-                                )}
-                            </div>
-                        )}
+                            {showAllOrgs && (
+                                <div className="mt-1 max-h-52 overflow-auto synapse-scroll">
+                                    {organizations.length === 0 ? (
+                                        <div className="px-3 py-2.5 text-xs text-white/40">No organizations found.</div>
+                                    ) : (
+                                        organizations.map((org) => (
+                                            <button
+                                                key={org.id}
+                                                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
+                                                    org.id === currentOrgId ? "text-white/90 bg-white/5" : "text-white/65 hover:bg-white/8"
+                                                }`}
+                                                onClick={() => {
+                                                    if (org.id !== currentOrgId) onSelectOrg?.(org.id);
+                                                    setOpenOrgMenu(false);
+                                                    setShowAllOrgs(false);
+                                                }}
+                                            >
+                                                <span className="truncate">{org.name}</span>
+                                                {org.id === currentOrgId && <FiCheck className="w-4 h-4 text-violet-300 shrink-0" />}
+                                            </button>
+                                        ))
+                                    )}
+                                </div>
+                            )}
 
-                        <button
-                            className="w-full flex items-center gap-2 px-4 py-3 text-sm text-gray-200 hover:bg-white/5 border-t border-white/5"
-                            onClick={() => {
-                                setOpenOrgMenu(false);
-                                setShowAllOrgs(false);
-                                router.push("/new-organization");
-                            }}
-                        >
-                            <FiPlus className="w-4 h-4" />
-                            <span>New organization</span>
-                        </button>
+                            <div className="my-1 h-px bg-white/8" />
+                            <button
+                                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-white/80 hover:bg-white/8 transition-colors"
+                                onClick={() => {
+                                    setOpenOrgMenu(false);
+                                    setShowAllOrgs(false);
+                                    router.push("/new-organization");
+                                }}
+                            >
+                                <FiPlus className="w-4 h-4" />
+                                <span>New organization</span>
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>
 
             {/* RIGHT — PROFILE */}
-            <div className="flex items-center gap-4 relative" ref={profileMenuRef}>
-                <button className="text-gray-400 hover:text-gray-200">
+            <div className="flex items-center gap-1.5 sm:gap-2 relative" ref={profileMenuRef}>
+                <button className="grid place-items-center h-9 w-9 rounded-lg text-white/50 hover:text-white hover:bg-white/8 transition-colors">
                     <FiHelpCircle className="w-4 h-4" />
                 </button>
-
-                <button className="text-gray-400 hover:text-gray-200">
+                <button className="grid place-items-center h-9 w-9 rounded-lg text-white/50 hover:text-white hover:bg-white/8 transition-colors">
                     <FiBell className="w-4 h-4" />
                 </button>
 
@@ -186,42 +170,48 @@ export default function DashboardNavbar({
                         setOpenProfileMenu((v) => !v);
                         setOpenOrgMenu(false);
                     }}
-                    className="relative flex items-center justify-center hover:scale-105 transition-transform"
+                    className="ml-1 flex items-center justify-center hover:scale-105 transition-transform"
                 >
-                    <div className="h-8 w-8 rounded-full bg-white flex items-center justify-center shadow-lg shadow-black/20">
-                        <FiUser className="w-4 h-4 text-black" />
+                    <div className="h-8 w-8 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center ring-1 ring-white/20">
+                        <FiUser className="w-4 h-4 text-white" />
                     </div>
                 </button>
 
                 {openProfileMenu && (
-                    <div className="absolute right-0 top-10 w-72 rounded-xl border border-white/10 bg-[#05060C] shadow-2xl shadow-black/60 overflow-hidden">
-                        <div className="px-4 py-3 text-sm font-medium text-gray-100 border-b border-white/5">
-                            {email}
+                    <div className="absolute right-0 top-12 w-72 rounded-2xl surface-menu overflow-hidden z-[60]">
+                        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-white/10">
+                            <div className="h-9 w-9 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center ring-1 ring-white/20 shrink-0">
+                                <FiUser className="w-4 h-4 text-white" />
+                            </div>
+                            <div className="min-w-0">
+                                <p className="text-xs text-white/40">Signed in as</p>
+                                <p className="text-sm font-medium text-white/90 truncate">{email}</p>
+                            </div>
                         </div>
-
-                        <button className="w-full flex items-center gap-2 px-4 py-3 text-sm text-gray-200 hover:bg-white/5">
-                            <FiSettings className="w-4 h-4 text-gray-400" />
-                            <span>Account preferences</span>
-                        </button>
-
-                        <button
-                            className="w-full flex items-center gap-2 px-4 py-3 text-sm text-gray-200 hover:bg-white/5 border-b border-white/5"
-                            onClick={() => {
-                                setOpenProfileMenu(false);
-                                onOpenHardware?.();
-                            }}
-                        >
-                            <FiZap className="w-4 h-4 text-gray-400" />
-                            <span>GPU Capabilities</span>
-                        </button>
-
-                        <button
-                            className="w-full flex items-center gap-2 px-4 py-3 text-sm text-gray-200 hover:bg-red-500/10 hover:text-red-300"
-                            onClick={onLogout}
-                        >
-                            <FiLogOut className="w-4 h-4" />
-                            <span>Log out</span>
-                        </button>
+                        <div className="p-1.5">
+                            <button className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-white/80 hover:bg-white/8 transition-colors">
+                                <FiSettings className="w-4 h-4 text-white/50" />
+                                <span>Account preferences</span>
+                            </button>
+                            <button
+                                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-white/80 hover:bg-white/8 transition-colors"
+                                onClick={() => {
+                                    setOpenProfileMenu(false);
+                                    onOpenHardware?.();
+                                }}
+                            >
+                                <FiZap className="w-4 h-4 text-white/50" />
+                                <span>GPU Capabilities</span>
+                            </button>
+                            <div className="my-1 h-px bg-white/8" />
+                            <button
+                                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-rose-300/90 hover:bg-rose-500/12 transition-colors"
+                                onClick={onLogout}
+                            >
+                                <FiLogOut className="w-4 h-4" />
+                                <span>Log out</span>
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>

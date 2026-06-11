@@ -1,3 +1,5 @@
+"use client";
+
 import {
     FiDatabase,
     FiLayers,
@@ -6,131 +8,108 @@ import {
     FiBarChart2,
     FiShield,
 } from "react-icons/fi";
+import Reveal from "@/components/Reveal";
 
 const features = [
     {
         icon: FiLayers,
         label: "Libraries & Buckets",
         title: "Structured knowledge, not vector soup.",
-        body: "Organize documents, social feeds, and databases into libraries, buckets, and clusters so Synapse can reason with context, not chaos.",
-        bullets: [
-            "Per-org libraries and buckets",
-            "Clustered by topic & source",
-            "Ready for RAG at scale",
-        ],
+        body: "Organize documents, feeds, and databases into libraries and clusters so Synapse reasons with context — not chaos.",
+        bullets: ["Per-org libraries", "Clustered by topic & source", "RAG-ready at scale"],
+        glow: "from-violet-500/25",
     },
     {
         icon: FiDatabase,
         label: "Multi-source RAG",
         title: "Docs, DBs, and streams in one query.",
-        body: "Blend unstructured docs with SQL/NoSQL tables and live feeds. Synapse turns everything into a unified retrieval layer.",
-        bullets: [
-            "Keyword + semantic + neighbor search",
-            "Hybrid filters by org / library / bucket",
-            "Grounded answers with citations",
-        ],
+        body: "Blend unstructured docs with tables and live feeds into a single unified retrieval layer.",
+        bullets: ["Keyword + semantic + neighbor", "Hybrid org/library filters", "Grounded, cited answers"],
+        glow: "from-fuchsia-500/25",
     },
     {
         icon: FiCpu,
         label: "Multi-Agent Reasoning",
         title: "MA-RAG with a curious brain.",
-        body: "Planner, extractors, and a main LLM (Claude / GPT) cooperate to decompose queries, pull better evidence, and avoid hallucinations.",
-        bullets: [
-            "MA-RAG + Chain-of-Thought",
-            "Curious follow-up retrieval",
-            "Evidence-first answers",
-        ],
+        body: "A planner, extractors, and a main LLM cooperate to decompose queries, pull better evidence, and avoid hallucinations.",
+        bullets: ["MA-RAG + chain-of-thought", "Curious follow-up retrieval", "Evidence-first answers"],
+        glow: "from-blue-500/25",
     },
     {
         icon: FiBarChart2,
-        label: "Analytics & Graphs",
-        title: "From raw data to live dashboards.",
-        body: "Generate charts, graphs, and reports directly from your corpora and databases — ready for BI tools or internal stakeholders.",
-        bullets: [
-            "Auto-generated charts & summaries",
-            "Time-series & comparison queries",
-            "Exportable reports & dashboards",
-        ],
+        label: "Vision & Tables",
+        title: "It reads figures, not just text.",
+        body: "Layout detection, OCR, and a vision-language model caption figures, tables, and charts so nothing is lost.",
+        bullets: ["DocLayout-YOLO regions", "Surya / Tesseract OCR", "Qwen-VL captions"],
+        glow: "from-cyan-500/25",
     },
     {
         icon: FiUsers,
         label: "Team Workspaces",
         title: "Chat as a team, think as one brain.",
-        body: "Share chats, reuse context across threads, and let Synapse answer using the combined knowledge of your entire workspace.",
-        bullets: [
-            "Shared chats & parallel threads",
-            "Import previous chats as context",
-            "Org-level and team-level spaces",
-        ],
+        body: "Share threads, reuse context, and let Synapse answer from the combined knowledge of your workspace.",
+        bullets: ["Shared & parallel threads", "Import chats as context", "Org- and team-level spaces"],
+        glow: "from-indigo-500/25",
     },
     {
         icon: FiShield,
         label: "Hybrid Local + Cloud",
-        title: "Your data stays home. Synapse travels.",
-        body: "Run heavy preprocessing on local GPUs while only sending compact context to cloud LLMs — built for security-sensitive orgs.",
-        bullets: [
-            "Local doc & DB processing",
-            "Cloud LLM for final reasoning",
-            "On-prem friendly architecture",
-        ],
+        title: "Your data stays home.",
+        body: "Run heavy preprocessing on your own GPU and send only compact context to the cloud LLM.",
+        bullets: ["Local doc & DB processing", "Cloud LLM for synthesis", "On-prem friendly"],
+        glow: "from-emerald-500/25",
     },
 ];
 
 export default function Features() {
     return (
-        <section className="relative" style={{ backgroundColor: "var(--bg-primary)", borderTop: "1px solid var(--border-color-subtle)" }}>
-            <div className="max-w-6xl mx-auto px-6 py-20">
-                <div className="mb-10 text-center">
-                    <p className="text-xs uppercase tracking-[0.25em] text-[#d4a5e9]">
-                        Features
-                    </p>
-                    <h2 className="mt-3 text-3xl md:text-4xl font-semibold text-white">
-                        Everything Synapse needs to think over your data.
+        <section id="features" className="relative py-24">
+            <div className="max-w-7xl mx-auto px-5 sm:px-6">
+                <Reveal className="mx-auto max-w-2xl text-center">
+                    <span className="eyebrow">Capabilities</span>
+                    <h2 className="mt-5 text-3xl md:text-5xl font-bold tracking-tight text-white">
+                        The whole pipeline,{" "}
+                        <span className="gradient-text">not just a chatbot</span>
                     </h2>
-                    <p className="mt-4 text-sm md:text-base text-gray-400 max-w-2xl mx-auto">
-                        From ingestion and retrieval to reasoning and analytics, Synapse
-                        ships the whole pipeline — not just a chatbot on top of a vector
-                        store.
+                    <p className="mt-4 text-white/60">
+                        From ingestion and layout-aware parsing to retrieval, reasoning, and cited answers —
+                        Synapse ships the entire stack.
                     </p>
-                </div>
+                </Reveal>
 
-                <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-                    {features.map((feature) => {
+                <div className="mt-14 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                    {features.map((feature, i) => {
                         const Icon = feature.icon;
                         return (
-                            <div
-                                key={feature.label}
-                                className="group relative overflow-hidden rounded-3xl p-5 flex flex-col justify-between shadow-soft transition duration-200 hover:border-[#884ab4]/40 hover:-translate-y-1"
-                                style={{ backgroundColor: "var(--bg-secondary)", border: "1px solid var(--border-color)" }}
-                            >
-                                {/* subtle inner glow */}
-                                <div className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition duration-300">
-                                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(136,74,180,0.20),_transparent_60%)]" />
-                                </div>
+                            <Reveal key={feature.label} delay={(i % 3) * 90}>
+                                <div className="group relative h-full overflow-hidden rounded-3xl glass glass-hi hover-glow p-6 flex flex-col">
+                                    {/* hover glow */}
+                                    <div className={`pointer-events-none absolute -top-20 -right-20 h-48 w-48 rounded-full bg-gradient-to-br ${feature.glow} to-transparent blur-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
 
-                                <div className="relative z-10">
-                                    <div className="flex items-center gap-2 text-xs font-medium text-gray-300 mb-3">
-                                        <div className="h-7 w-7 rounded-xl bg-white/5 flex items-center justify-center">
-                                            <Icon className="text-[#b87fd9]" />
+                                    <div className="relative z-10 flex items-center gap-3 mb-4">
+                                        <div className="grid place-items-center h-11 w-11 rounded-2xl bg-gradient-to-br from-violet-500/90 to-fuchsia-500/90 shadow-lg shadow-violet-500/25">
+                                            <Icon className="text-white text-lg" />
                                         </div>
-                                        <span>{feature.label}</span>
+                                        <span className="text-xs font-medium uppercase tracking-wider text-white/50">
+                                            {feature.label}
+                                        </span>
                                     </div>
 
-                                    <h3 className="text-[15px] font-semibold text-white mb-2">
+                                    <h3 className="relative z-10 text-lg font-semibold text-white mb-2">
                                         {feature.title}
                                     </h3>
-                                    <p className="text-xs text-gray-400 mb-4">{feature.body}</p>
-                                </div>
+                                    <p className="relative z-10 text-sm text-white/60 mb-5">{feature.body}</p>
 
-                                <ul className="relative z-10 mt-auto space-y-1.5 text-xs text-gray-300">
-                                    {feature.bullets.map((b) => (
-                                        <li key={b} className="flex items-start gap-1.5">
-                                            <span className="mt-[6px] h-1.5 w-1.5 rounded-full bg-[#884ab4]" />
-                                            <span>{b}</span>
-                                        </li>
-                                    ))}
-                                </ul>
-                            </div>
+                                    <ul className="relative z-10 mt-auto space-y-2 text-sm text-white/70">
+                                        {feature.bullets.map((b) => (
+                                            <li key={b} className="flex items-start gap-2">
+                                                <span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-gradient-to-r from-violet-400 to-fuchsia-400" />
+                                                <span>{b}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </Reveal>
                         );
                     })}
                 </div>

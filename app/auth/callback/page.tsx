@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
@@ -29,7 +29,7 @@ async function waitForSession(
     return null;
 }
 
-export default function AuthCallbackPage() {
+function AuthCallbackInner() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const supabase = createSupabaseBrowserClient();
@@ -104,5 +104,13 @@ export default function AuthCallbackPage() {
                 <p className="mt-2 text-sm text-gray-400">{message}</p>
             </div>
         </main>
+    );
+}
+
+export default function AuthCallbackPage() {
+    return (
+        <Suspense fallback={null}>
+            <AuthCallbackInner />
+        </Suspense>
     );
 }

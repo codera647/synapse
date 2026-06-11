@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { openGoogleDriveFolderPicker } from "@/lib/googleDrivePicker";
@@ -46,9 +46,11 @@ type HardwareInfo = {
 
 export default function DashboardPage() {
     return (
-        <LogProvider>
-            <DashboardPageInner />
-        </LogProvider>
+        <Suspense fallback={null}>
+            <LogProvider>
+                <DashboardPageInner />
+            </LogProvider>
+        </Suspense>
     );
 }
 
@@ -997,15 +999,15 @@ function DashboardPageInner() {
                     <div className="flex flex-1">
                     <DashboardSidebar onToggleConsole={toggleConsole} consoleOpen={consoleOpen} />
 
-                    <div className="flex-1 flex items-center justify-center ml-14">
+                    <div className="flex-1 flex items-center justify-center ml-16">
                         <div className="text-center">
                             <button
                                 onClick={() => router.push("/new-organization")}
-                                className="w-20 h-20 rounded-2xl bg-[#884ab4]/20 hover:bg-[#884ab4]/40 flex items-center justify-center mx-auto mb-6 transition-all cursor-pointer hover:scale-105"
+                                className="w-20 h-20 rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow-xl shadow-violet-500/30 flex items-center justify-center mx-auto mb-6 transition-all cursor-pointer hover:scale-105 animate-float"
                             >
-                                <FiPlus className="w-10 h-10 text-[#b87fd9]" />
+                                <FiPlus className="w-10 h-10 text-white" />
                             </button>
-                            <h2 className="text-2xl font-bold text-gray-100">
+                            <h2 className="text-2xl font-bold text-white">
                                 Create your first organization
                             </h2>
                             <p className="mt-2 text-sm text-gray-400 max-w-md">
@@ -1039,7 +1041,7 @@ function DashboardPageInner() {
                     <DashboardSidebar onToggleConsole={toggleConsole} consoleOpen={consoleOpen} />
 
                     {/* Centered loading text in main area */}
-                    <div className="flex-1 flex items-center justify-center text-gray-400 text-sm ml-14">
+                    <div className="flex-1 flex items-center justify-center text-gray-400 text-sm ml-16">
                         <Loader />
                     </div>
                 </div>
@@ -1068,7 +1070,7 @@ function DashboardPageInner() {
 
                 {/* Main content */}
                 <main
-                    className={`flex-1 w-full px-6 pt-8 pb-10 ml-14 ${activeTab === "chat"
+                    className={`flex-1 w-full px-6 pt-8 pb-10 ml-16 ${activeTab === "chat"
                         ? "max-w-none mx-0 pr-10"
                         : "max-w-6xl mx-auto"
                         }`}
@@ -1090,27 +1092,28 @@ function DashboardPageInner() {
                     ) : (
                         <>
                             {/* Title row */}
-                            <div className="flex items-center justify-between mb-4">
-                                <h1 className="text-3xl font-bold tracking-tight">Libraries</h1>
+                            <div className="flex items-center justify-between mb-5">
+                                <div>
+                                    <h1 className="text-3xl font-bold tracking-tight">
+                                        Your <span className="gradient-text">libraries</span>
+                                    </h1>
+                                    <p className="mt-1 text-sm text-white/50">
+                                        Connect a source, process it, then chat with your documents.
+                                    </p>
+                                </div>
 
                                 {/* View toggle + New Library */}
                                 <div className="flex items-center gap-3">
-                                    <div className="flex items-center rounded-lg border border-white/10 bg-black/30">
+                                    <div className="flex items-center rounded-xl glass p-1">
                                         <button
                                             onClick={() => setView("grid")}
-                                            className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === "grid"
-                                                ? "bg-white/10 text-gray-100"
-                                                : "text-gray-400 hover:text-gray-200"
-                                                } rounded-l-lg`}
+                                            className={`grid place-items-center h-7 w-7 rounded-lg text-xs transition-colors ${view === "grid" ? "bg-white/12 text-white" : "text-white/45 hover:text-white"}`}
                                         >
                                             <FiGrid className="w-3.5 h-3.5" />
                                         </button>
                                         <button
                                             onClick={() => setView("list")}
-                                            className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === "list"
-                                                ? "bg-white/10 text-gray-100"
-                                                : "text-gray-400 hover:text-gray-200"
-                                                } rounded-r-lg`}
+                                            className={`grid place-items-center h-7 w-7 rounded-lg text-xs transition-colors ${view === "list" ? "bg-white/12 text-white" : "text-white/45 hover:text-white"}`}
                                         >
                                             <FiList className="w-3.5 h-3.5" />
                                         </button>
@@ -1118,9 +1121,9 @@ function DashboardPageInner() {
 
                                     <button
                                         onClick={openCreateLibrary}
-                                        className="rounded-lg border border-[#b87fd9]/40 bg-[#884ab4] px-4 py-1.5 text-sm font-medium shadow-md shadow-[#884ab4]/40 hover:bg-[#9d5fc9] hover:shadow-[#9d5fc9]/40 transition-all"
+                                        className="btn-grad inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium text-white"
                                     >
-                                        + New library
+                                        <FiPlus className="w-4 h-4" /> New library
                                     </button>
                                 </div>
                             </div>
@@ -1128,15 +1131,15 @@ function DashboardPageInner() {
                             {/* Search bar + Filter */}
                             <div className="flex items-center gap-2 mb-8">
                                 <div className="w-full max-w-[450px] relative">
-                                    <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                    <FiSearch className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
                                     <input
                                         value={search}
                                         onChange={(e) => setSearch(e.target.value)}
                                         placeholder="Search for a library"
-                                        className="w-full rounded-lg bg-[color:var(--bg-secondary)]/60 border border-white/10 pl-10 pr-3 py-2 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:border-white/30 transition-all shadow-inner"
+                                        className="w-full rounded-xl glass pl-10 pr-3 py-2.5 text-sm text-white placeholder:text-white/40 outline-none transition-all focus:border-violet-400/50"
                                     />
                                 </div>
-                                <button className="p-2 rounded-lg border border-white/10 bg-[color:var(--bg-secondary)]/60 text-gray-400 hover:text-white hover:bg-white/5 transition-all">
+                                <button className="grid place-items-center h-[42px] w-[42px] rounded-xl glass text-white/50 hover:text-white transition-all">
                                     <FiFilter className="w-4 h-4" />
                                 </button>
                             </div>
@@ -1148,7 +1151,7 @@ function DashboardPageInner() {
                                     <div className="mt-4">
                                         <button
                                             onClick={openCreateLibrary}
-                                            className="rounded-lg border border-[#b87fd9]/40 bg-[#884ab4] px-3 py-1.5 text-xs font-medium text-white shadow-md shadow-[#884ab4]/40 hover:bg-[#9d5fc9] hover:shadow-[#9d5fc9]/40 transition-all"
+                                            className="btn-grad rounded-xl px-4 py-2 text-xs font-medium text-white"
                                         >
                                             Create library
                                         </button>
@@ -1187,7 +1190,7 @@ function DashboardPageInner() {
                                 return (
                                 <div
                                     key={lib.id}
-                                    className="group text-left rounded-xl border border-[#884ab4]/40 bg-[color:var(--bg-secondary)] px-5 py-5 flex items-center justify-between hover:border-[#b87fd9] hover:bg-white/5 transition-all w-full max-w-[450px]"
+                                    className="group text-left rounded-2xl glass glass-hi hover-glow px-5 py-5 flex items-center justify-between gap-4 transition-all w-full cursor-pointer"
                                     role="button"
                                     tabIndex={0}
                                     onClick={() => openDrawer(lib)}
@@ -1211,7 +1214,7 @@ function DashboardPageInner() {
 	                                                                ? "bg-emerald-500"
                                                                 : getPipelineStatus(lib) === "failed"
                                                                     ? "bg-red-500"
-                                                                    : "bg-[#884ab4] animate-pulse"
+                                                                    : "bg-gradient-to-r from-violet-400 to-fuchsia-400 shimmer"
                                                             }`}
                                                         style={{
                                                             width: `${getProgressPercent(lib)}%`,
@@ -1221,13 +1224,8 @@ function DashboardPageInner() {
                                                 </div>
                                             </div>
                                         </div>
-                                        <p className="mt-2 text-[11px] text-gray-400">
+                                        <p className="mt-2 text-[11px] text-white/40">
                                             {Math.round(getProgressPercent(lib))}% complete
-                                            {false && typeof lib.completed_batches === "number" &&
-                                            typeof lib.total_batches === "number" &&
-                                            lib.total_batches > 0
-                                                ? ` • Batches completed ${lib.completed_batches}/${lib.total_batches}`
-                                                : ""}
                                         </p>
                                     </div>
 
@@ -1410,7 +1408,7 @@ function DashboardPageInner() {
                                 <button
                                     type="submit"
                                     disabled={!newLibraryName.trim() || !newLibrarySourceFolder.trim()}
-                                    className="rounded-lg bg-[#3b82f6] hover:bg-[#2563eb] px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:shadow-[0_10px_30px_rgba(59,130,246,0.35)]"
+                                    className="btn-grad rounded-xl px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                                 >
                                     {createLibraryLoading ? "Creating..." : "Create library"}
                                 </button>
@@ -1420,210 +1418,6 @@ function DashboardPageInner() {
                 </div>
             )}
 
-            {false && activeLibrary && (
-                <div className="fixed inset-0 z-40 flex items-center justify-center px-4">
-                    <button
-                        className="absolute inset-0 bg-black/70"
-                        aria-label="Close library details"
-                        onClick={closeLibraryDetails}
-                    />
-                    <div
-                        role="dialog"
-                        aria-modal="true"
-                        className="relative w-full max-w-xl rounded-2xl border border-white/10 p-8 shadow-2xl"
-                        style={{
-                            backgroundColor: "var(--bg-secondary)",
-                            color: "var(--text-primary)",
-                        }}
-                    >
-                        <div className="flex items-start justify-between gap-4">
-                            <div>
-                                <h2 className="text-xl font-semibold text-gray-100">
-                                    {activeLibrary.name}
-                                </h2>
-                                <div className="mt-2 flex items-center gap-3">
-                                    {getStatusBadge(getPipelineStatus(activeLibrary))}
-                                    <span className="text-xs text-gray-400">
-                                        Created {formatCreatedAt(activeLibrary.created_at)}
-                                    </span>
-                                </div>
-                            </div>
-                            <button
-                                className="text-sm text-gray-400 hover:text-gray-200"
-                                onClick={closeLibraryDetails}
-                            >
-                                Close
-                            </button>
-                        </div>
-
-                        <div className="mt-6 grid gap-4 md:grid-cols-2">
-                            <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-                                <p className="text-xs text-gray-500">Source type</p>
-                                <p className="mt-1 text-sm text-gray-100">
-                                    {activeLibrary.source_type ?? "google_drive"}
-                                </p>
-                            </div>
-                            <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-                                <p className="text-xs text-gray-500">Source folder ID</p>
-                                <p className="mt-1 text-sm text-gray-100 break-all">
-                                    {activeLibrary.source_type === "google_drive"
-                                        ? "Saved in database"
-                                        : "Not available"}
-                                </p>
-                            </div>
-	                            <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-	                                <p className="text-xs text-gray-500">Preprocessing</p>
-	                                <p className="mt-2 text-sm text-gray-100">
-	                                    {Math.round(getProgressPercent(activeLibrary))}% complete
-	                                </p>
-	                                <div className="mt-3 h-2 w-full rounded-full bg-white/10 overflow-hidden">
-	                                    <div
-	                                        className={`h-full rounded-full transition-all duration-500 ${getPipelineStatus(activeLibrary) === "completed"
-	                                            ? "bg-emerald-500"
-                                            : getPipelineStatus(activeLibrary) === "failed"
-                                                ? "bg-red-500"
-                                                : "bg-[#884ab4] animate-pulse"
-                                            }`}
-                                        style={{ width: `${getProgressPercent(activeLibrary)}%` }}
-	                                    />
-	                                </div>
-	                                {typeof activeLibrary.completed_batches === "number" &&
-	                                    typeof activeLibrary.total_batches === "number" &&
-	                                    activeLibrary.total_batches > 0 &&
-	                                    activeLibrary.completed_batches > 0 && (
-	                                        <p className="mt-2 text-[11px] text-gray-400">
-	                                            Batches completed {activeLibrary.completed_batches} / {activeLibrary.total_batches}
-	                                        </p>
-	                                    )}
-	                            </div>
-                            <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-                                <p className="text-xs text-gray-500">Documents</p>
-                                <p className="mt-2 text-sm text-gray-100">
-                                    {activeLibraryDocs ?? "—"}
-                                </p>
-                                <p className="mt-1 text-[11px] text-gray-500">
-                                    {activeLibraryLastSync
-                                        ? `Last synced ${formatCreatedAt(activeLibraryLastSync)}`
-                                        : "No completed sync yet."}
-                                </p>
-                            </div>
-                        </div>
-
-	                        <div className="mt-6 flex items-center justify-between gap-3">
-	                            {syncError && (
-	                                <span className="text-xs text-red-400 mr-auto">
-	                                    {syncError}
-	                                </span>
-                            )}
-                            {syncSuccess && (
-                                <span className="text-xs text-emerald-300 mr-auto">
-                                    {syncSuccess}
-                                </span>
-                            )}
-                            {deleteError && (
-                                <span className="text-xs text-red-400 mr-auto">
-                                    {deleteError}
-                                </span>
-                            )}
-	                            <button
-	                                type="button"
-	                                className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300 hover:bg-red-500/20 transition-all"
-	                                onClick={handleDeleteLibrary}
-	                                disabled={deleteLoading}
-	                            >
-	                                {deleteLoading ? "Deleting..." : "Delete library"}
-	                            </button>
-	                            {(() => {
-	                                const pipelineStatus = getPipelineStatus(activeLibrary);
-	                                const canCancel =
-	                                    pipelineStatus === "queued" || pipelineStatus === "running";
-	                                if (!canCancel) return null;
-                                return (
-	                                    <button
-	                                        type="button"
-	                                        className="rounded-lg border border-yellow-400/40 bg-yellow-400/10 px-4 py-2 text-sm font-medium text-yellow-200 hover:bg-yellow-400/15 transition-all disabled:opacity-60"
-	                                        onClick={() => handleCancelProcessing(activeLibrary)}
-	                                        disabled={cancelingLibraryIds.has(activeLibrary.id)}
-	                                    >
-	                                        {cancelingLibraryIds.has(activeLibrary.id) ? "Canceling..." : "Cancel processing"}
-	                                    </button>
-	                                );
-	                            })()}
-                            {(() => {
-                                const pipelineStatus = getPipelineStatus(activeLibrary);
-                                const totalBatches = activeLibrary.total_batches ?? 0;
-                                const completedBatches = activeLibrary.completed_batches ?? 0;
-                                const incomplete =
-                                    typeof totalBatches === "number" &&
-                                    totalBatches > 0 &&
-                                    typeof completedBatches === "number" &&
-                                    completedBatches < totalBatches;
-
-                                const canResume =
-                                    pipelineStatus === "failed" ||
-                                    pipelineStatus === "error" ||
-                                    pipelineStatus === "canceled" ||
-                                    incomplete;
-
-                                if (!canResume) return null;
-
-                                return (
-                                <button
-                                    type="button"
-                                    className="rounded-lg border border-yellow-400/40 bg-yellow-400/10 px-4 py-2 text-sm font-medium text-yellow-200 hover:bg-yellow-400/15 transition-all disabled:opacity-60"
-                                    onClick={handleResumeLibrary}
-                                    disabled={syncLoading}
-                                >
-                                    {syncLoading ? "Resuming..." : "Resume processing"}
-                                </button>
-                                );
-                            })()}
-
-                            {(() => {
-                                const pipelineStatus = getPipelineStatus(activeLibrary);
-                                const canCancel =
-                                    pipelineStatus === "queued" || pipelineStatus === "running";
-                                const totalBatches = activeLibrary.total_batches ?? 0;
-                                const completedBatches = activeLibrary.completed_batches ?? 0;
-                                const incomplete =
-                                    typeof totalBatches === "number" &&
-                                    totalBatches > 0 &&
-                                    typeof completedBatches === "number" &&
-                                    completedBatches < totalBatches;
-
-                                const canResume =
-                                    pipelineStatus === "failed" ||
-                                    pipelineStatus === "error" ||
-                                    pipelineStatus === "canceled" ||
-                                    incomplete;
-
-                                // When resume is available, hide the "Start preprocessing" action to avoid confusion.
-                                if (canResume || canCancel) return null;
-                                if (pipelineStatus === "completed") return null;
-
-	                                return (
-	                                    <button
-	                                        type="button"
-                                        className="rounded-lg bg-[#3b82f6] hover:bg-[#2563eb] px-4 py-2 text-sm font-medium text-white shadow-md transition-all disabled:opacity-60"
-                                        onClick={handleSyncLibrary}
-                                        disabled={
-                                            syncLoading ||
-                                            pipelineStatus === "queued" ||
-                                            pipelineStatus === "running"
-                                        }
-                                    >
-                                        {syncLoading
-                                            ? "Queueing..."
-                                            : pipelineStatus === "queued" || pipelineStatus === "running"
-                                                    ? "Preprocessing..."
-                                                    : "Start preprocessing"}
-                                    </button>
-                                );
-                            })()}
-                        </div>
-                    </div>
-                </div>
-            )}
 
             {hardwareOpen && (
                 <div className="fixed inset-0 z-40 flex items-start justify-center px-4 pt-16 overflow-y-auto">

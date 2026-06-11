@@ -12,6 +12,11 @@ import {
   FiSquare,
   FiTrash2,
   FiCopy,
+  FiEdit3,
+  FiBookOpen,
+  FiX,
+  FiArrowUp,
+  FiCheck,
 } from "react-icons/fi";
 import ChatMarkdown from "@/components/ChatMarkdown";
 import ChatMessageSources from "@/components/ChatMessageSources";
@@ -956,278 +961,313 @@ export default function ChatPanel({
     el.scrollTop = el.scrollHeight;
   }, [activeThreadId, displayMessages.length, thinking]);
 
+  const suggestions = [
+    "Summarize the key findings across my documents.",
+    "What methods or approaches are compared?",
+    "List the main limitations mentioned.",
+    "Explain this topic with citations.",
+  ];
+
   return (
-    <div
-      className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-white/10 bg-[color:var(--bg-secondary)]/40 shadow-[0_18px_70px_rgba(0,0,0,0.35)]"
-    >
-      {/* Top “browser bar” */}
-      <div className="rounded-t-2xl border-b border-white/10 bg-black/20 px-4 py-3">
-        <div className="flex items-center gap-2">
-          {/* Address-style prompt bar */}
-          <div
-            className="group relative flex flex-1 items-center gap-2 rounded-full border border-white/10 bg-[radial-gradient(circle_at_20%_15%,rgba(184,127,217,0.12),transparent_55%)] px-2.5 py-2 shadow-inner transition-all focus-within:border-white/20"
-            style={{ boxShadow: "0 10px 30px rgba(0,0,0,0.30) inset" }}
-          >
+    <div className="relative flex h-full overflow-hidden rounded-2xl surface-panel shadow-[0_18px_70px_rgba(0,0,0,0.35)]">
+      {/* History rail (ChatGPT-style) */}
+      {historyOpen ? (
+        <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-white/10 bg-black/15">
+          <div className="p-3">
             <button
               type="button"
               onClick={newThread}
-              className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-200 transition-colors hover:bg-white/10"
-              title="New chat"
+              className="btn-grad w-full inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium text-white"
             >
-              <FiMessageSquare className="h-4 w-4" />
+              <FiEdit3 className="h-4 w-4" /> New chat
             </button>
-
-            <button
-              type="button"
-              onClick={() => setHistoryOpen((v) => !v)}
-              className="hidden lg:inline-flex relative h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-200 transition-colors hover:bg-white/10"
-              title={historyOpen ? "Hide history" : "Show history"}
-            >
-              {historyOpen ? <FiChevronLeft className="h-4 w-4" /> : <FiChevronRight className="h-4 w-4" />}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setLibraryPickerOpen((v) => !v)}
-              className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-200 transition-colors hover:bg-white/10"
-              title="Choose libraries"
-            >
-              <FiPlus className="h-4 w-4" />
-            </button>
-
-            {libraryPickerOpen ? (
-              <div className="absolute left-2 top-[54px] z-30 w-[min(520px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-white/10 bg-[#05060C] shadow-2xl shadow-black/60">
-                <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-black/30 px-4 py-3">
-                  <div className="min-w-0">
-                    <div className="text-[11px] uppercase tracking-[0.22em] text-gray-500">Libraries</div>
-                    <div className="mt-0.5 text-sm font-medium text-gray-100 truncate">{selectedLibrariesLabel}</div>
-                  </div>
-                  <button
-                    type="button"
-                    className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
-                    onClick={() => setLibraryPickerOpen(false)}
-                  >
-                    Close
-                  </button>
-                </div>
-                <div className="max-h-72 overflow-auto p-2">
-                  {readyLibraries.length === 0 ? (
-                    <div className="px-3 py-4 text-sm text-gray-400">No processed libraries yet.</div>
-                  ) : (
-                    readyLibraries.map((l) => {
-                      const checked = selectedSet.has(l.id);
-                      return (
-                        <button
-                          key={l.id}
-                          type="button"
-                          onClick={() => toggleLibrary(l.id)}
-                          className={`w-full flex items-center justify-between gap-3 rounded-xl px-3 py-2 text-sm transition-colors ${
-                            checked ? "bg-white/10 text-gray-100" : "text-gray-300 hover:bg-white/5 hover:text-gray-100"
-                          }`}
-                        >
-                          <span className="truncate">{l.name}</span>
-                          <span
-                            className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                              checked
-                                ? "border-[#b87fd9]/45 bg-[#884ab4]/15 text-gray-100"
-                                : "border-white/10 bg-white/5 text-gray-400"
-                            }`}
-                          >
-                            {checked ? "Selected" : "Select"}
-                          </span>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-                <div className="border-t border-white/10 bg-black/30 px-4 py-2 text-[11px] text-gray-500">
-                  Pick multiple libraries to broaden context.
-                </div>
-              </div>
-            ) : null}
-
-            <input
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
-              }}
-              placeholder={readyLibraries.length > 0 ? "Ask anything…" : "Process a library to start chatting…"}
-              className="min-w-0 flex-1 bg-transparent px-1 text-sm text-gray-100 placeholder:text-gray-500 outline-none"
-              disabled={readyLibraries.length === 0}
-              style={{
-                fontFamily:
-                  "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-              }}
-            />
-
-            <button
-              type="button"
-              onClick={() => {
-                if (thinking) stop();
-                else void send();
-              }}
-              disabled={!thinking && !canSend}
-              className={`relative inline-flex h-9 w-9 items-center justify-center rounded-full border transition-all ${
-                thinking
-                  ? "border-red-500/30 bg-red-500/10 text-red-100 hover:bg-red-500/15"
-                  : canSend
-                  ? "border-[#b87fd9]/45 bg-[#884ab4] text-white shadow-[0_16px_50px_rgba(136,74,180,0.28)] hover:bg-[#9d5fc9]"
-                  : "border-white/10 bg-white/5 text-gray-500"
-              } disabled:opacity-60`}
-              title={thinking ? "Stop" : "Send"}
-            >
-              <span className="absolute inset-0 opacity-0 transition-opacity duration-200 hover:opacity-100 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.20),transparent_55%)]" />
-              {thinking ? <FiSquare className="relative h-4 w-4" /> : <FiSend className="relative h-4 w-4" />}
-            </button>
-          </div>
-        </div>
-
-
-      </div>
-
-      {/* Content area */}
-      <div className="flex-1 min-h-0 rounded-b-2xl bg-[linear-gradient(180deg,rgba(0,0,0,0.02),rgba(0,0,0,0.10))]">
-        <div
-          className={`grid h-full min-h-0 grid-cols-1 ${
-            historyOpen ? "lg:grid-cols-[240px_minmax(0,1fr)]" : "lg:grid-cols-[minmax(0,1fr)]"
-          }`}
-        >
-          {/* History rail */}
-          {historyOpen ? (
-            <div className="hidden lg:flex h-full min-h-0 flex-col border-r border-white/10 bg-black/10">
-            <div className="px-4 pt-4 pb-3">
-              <div className="text-[11px] uppercase tracking-[0.22em] text-gray-500">History</div>
-              <div className="mt-2 flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-                <FiSearch className="h-4 w-4 text-gray-500" />
-                <input
-                  value={threadQuery}
-                  onChange={(e) => setThreadQuery(e.target.value)}
-                  placeholder="Search chats"
-                  className="w-full bg-transparent text-xs text-gray-100 placeholder:text-gray-500 outline-none"
-                />
-              </div>
+            <div className="mt-3 flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2">
+              <FiSearch className="h-4 w-4 text-white/40" />
+              <input
+                value={threadQuery}
+                onChange={(e) => setThreadQuery(e.target.value)}
+                placeholder="Search chats"
+                className="w-full bg-transparent text-xs text-white/90 placeholder:text-white/40 outline-none"
+              />
             </div>
+          </div>
 
-            <div className="synapse-scroll flex-1 overflow-auto px-2 pb-3">
-              {filteredThreads.length === 0 ? (
-                <div className="px-3 py-6 text-sm text-gray-500">
-                  No chats yet. Start by sending a prompt.
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {filteredThreads.slice(0, 120).map((t) => {
-                    const active = t.id === activeThreadId;
-                    return (
-                      <div key={t.id} className="flex items-stretch gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setActiveThreadId(t.id)}
-                          className={`min-w-0 flex-1 rounded-xl border px-3 py-2 text-left transition-colors ${
-                            active
-                              ? "border-[#b87fd9]/45 bg-[#884ab4]/15 text-gray-100"
-                              : "border-white/10 bg-white/4 text-gray-200 hover:bg-white/6"
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-semibold">{t.title}</div>
-                              <div className="mt-1 truncate text-[11px] text-gray-400">{t.lastSnippet || " "}</div>
-                            </div>
-                            <div className="shrink-0 text-[10px] text-gray-500">{formatClock(t.updatedAt)}</div>
-                          </div>
-                        </button>
+          <div className="synapse-scroll flex-1 overflow-auto px-2 pb-3">
+            {filteredThreads.length === 0 ? (
+              <div className="px-3 py-6 text-sm text-white/40">No chats yet.</div>
+            ) : (
+              <div className="space-y-0.5">
+                {filteredThreads.slice(0, 120).map((t) => {
+                  const active = t.id === activeThreadId;
+                  return (
+                    <div
+                      key={t.id}
+                      className={`group flex items-center gap-1 rounded-xl px-1 transition-colors ${
+                        active ? "bg-gradient-to-r from-violet-500/20 to-fuchsia-500/10" : "hover:bg-white/6"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setActiveThreadId(t.id)}
+                        className="min-w-0 flex-1 px-2.5 py-2.5 text-left"
+                      >
+                        <div className={`truncate text-sm font-medium ${active ? "text-white" : "text-white/80"}`}>
+                          {t.title}
+                        </div>
+                        <div className="mt-0.5 truncate text-[11px] text-white/40">
+                          {t.lastSnippet || formatClock(t.updatedAt)}
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void deleteThread(t.id)}
+                        className="shrink-0 grid place-items-center h-7 w-7 rounded-lg text-white/30 opacity-0 group-hover:opacity-100 hover:text-rose-300 hover:bg-rose-500/12 transition-all"
+                        title="Delete chat"
+                      >
+                        <FiTrash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </aside>
+      ) : null}
 
-                        <button
-                          type="button"
-                          onClick={() => void deleteThread(t.id)}
-                          className={`shrink-0 rounded-xl border px-2.5 text-gray-300 transition-colors ${
-                            active
-                              ? "border-[#b87fd9]/30 bg-black/10 hover:bg-red-500/10 hover:border-red-500/25 hover:text-red-100"
-                              : "border-white/10 bg-white/4 hover:bg-red-500/10 hover:border-red-500/25 hover:text-red-100"
-                          }`}
-                          title="Delete chat"
-                        >
-                          <FiTrash2 className="h-4 w-4" />
-                        </button>
+      {/* Main column */}
+      <div className="flex flex-1 min-w-0 flex-col">
+        {/* Slim header */}
+        <header className="flex items-center justify-between gap-3 border-b border-white/10 px-3 sm:px-4 py-2.5">
+          <button
+            type="button"
+            onClick={() => setHistoryOpen((v) => !v)}
+            className="hidden lg:grid place-items-center h-8 w-8 rounded-lg text-white/55 hover:text-white hover:bg-white/8 transition-colors"
+            title={historyOpen ? "Hide history" : "Show history"}
+          >
+            {historyOpen ? <FiChevronLeft className="h-4 w-4" /> : <FiChevronRight className="h-4 w-4" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={newThread}
+            className="lg:hidden grid place-items-center h-8 w-8 rounded-lg text-white/55 hover:text-white hover:bg-white/8 transition-colors"
+            title="New chat"
+          >
+            <FiEdit3 className="h-4 w-4" />
+          </button>
+
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="grid place-items-center h-7 w-7 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 shrink-0">
+              <FiMessageSquare className="h-3.5 w-3.5 text-white" />
+            </span>
+            <span className="text-sm font-medium text-white/85 truncate">
+              {threads.find((t) => t.id === activeThreadId)?.title ?? "New conversation"}
+            </span>
+          </div>
+
+          {/* library chip */}
+          <button
+            type="button"
+            onClick={() => setLibraryPickerOpen((v) => !v)}
+            className="ml-auto inline-flex items-center gap-2 rounded-lg glass px-2.5 py-1.5 text-xs text-white/80 hover:text-white transition-colors"
+            title="Choose libraries"
+          >
+            <FiBookOpen className="h-3.5 w-3.5 text-violet-300" />
+            <span className="max-w-[9rem] truncate">{selectedLibrariesLabel}</span>
+          </button>
+        </header>
+
+        {/* Messages */}
+        <div ref={scrollRef} className="synapse-scroll flex-1 min-h-0 overflow-auto px-3 sm:px-6 py-6">
+          {activeThreadId && displayMessages.length > 0 ? (
+            <div className="mx-auto w-full max-w-3xl space-y-6">
+              {displayMessages.map((m) => {
+                const isUser = m.role === "user";
+                if (isUser) {
+                  return (
+                    <div key={m.id} className="flex justify-end">
+                      <div className="max-w-[80%] rounded-2xl rounded-tr-md bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2.5 text-sm text-white shadow-lg shadow-violet-600/25 whitespace-pre-wrap">
+                        {m.content}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-          ) : null}
+                    </div>
+                  );
+                }
+                return (
+                  <div key={m.id} className="flex gap-3">
+                    <span className="mt-0.5 grid place-items-center h-8 w-8 shrink-0 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow-md shadow-violet-500/25">
+                      <FiMessageSquare className="h-4 w-4 text-white" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-semibold text-white/80">Synapse</span>
+                        <span className="text-[10px] text-white/30">{formatClock(m.ts)}</span>
+                      </div>
 
-          {/* Conversation */}
-          <div className="h-full min-h-0 min-w-0 overflow-hidden">
-            <div ref={scrollRef} className="synapse-scroll h-full overflow-auto p-4">
-              {activeThreadId && displayMessages.length > 0 ? (
-                <div className="mx-auto w-full max-w-[980px] space-y-3">
-                  {displayMessages.map((m) => {
-                    const isUser = m.role === "user";
-                    return (
-                      <div key={m.id} className={`flex justify-start`}>
-                        <div
-                          className={`max-w-[78%] ${isUser ? "mr-auto w-fit rounded-2xl px-4 py-3 border border-[#b87fd9]/30 bg-[#884ab4]/15 text-gray-100" : "w-full px-1 text-gray-100"}`}
-                          style={isUser ? { boxShadow: "0 14px 40px rgba(0,0,0,0.14)" } : undefined}
-                        >
-                          <div className="mb-2 flex items-center justify-between text-[10px] text-gray-500">
-                            <span className="uppercase tracking-[0.16em]">{isUser ? "You" : "Synapse"}</span>
-                            <span>{formatClock(m.ts)}</span>
-                          </div>
-
-                          {m.role === "assistant" ? (
-                            m.status === "streaming" && (m.content || "").trim().length === 0 ? (
-                              <TypingIndicator />
-                            ) : (
-                              <ChatMarkdown content={m.content} />
-                            )
-                          ) : (
-                            <div className="whitespace-pre-wrap text-left">{m.content}</div>
-                          )}
-
-                          {m.role === "assistant" && (m.sources?.length || 0) > 0 ? (
+                      {m.status === "streaming" && (m.content || "").trim().length === 0 ? (
+                        <TypingIndicator />
+                      ) : (
+                        <div className="rounded-2xl rounded-tl-md glass px-4 py-3">
+                          <ChatMarkdown content={m.content} />
+                          {(m.sources?.length || 0) > 0 ? (
                             <ChatMessageSources sources={m.sources || []} onClickSource={(s) => void openSourcePdf(s)} />
                           ) : null}
-                          {m.role === "assistant" && (m.followups?.length || 0) > 0 ? (
-                            <div className="mt-2 text-[11px] text-gray-500">
+                          {(m.followups?.length || 0) > 0 ? (
+                            <div className="mt-2 text-[11px] text-white/40">
                               Agent hops: {m.followups!.map((f) => `#${f.hop}`).join(", ")}
                             </div>
                           ) : null}
-
-                          {m.role === "assistant" && m.status !== "streaming" ? (
-                            <div className="mt-3 flex items-center justify-end">
-                              <button
-                                type="button"
-                                onClick={() => void copyMessage(m.id, m.content)}
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
-                                title="Copy response"
-                              >
-                                <FiCopy className="h-3.5 w-3.5" />
-                                {copiedMessageId === m.id ? "Copied" : "Copy"}
-                              </button>
-                            </div>
-                          ) : null}
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="flex h-full items-center justify-center px-6 text-center">
-                  <div className="max-w-md">
-                    <div className="text-[11px] uppercase tracking-[0.22em] text-gray-500">Chat</div>
-                    <div className="mt-2 text-sm text-gray-300">
-                      Type a prompt in the bar above to start a new conversation.
+                      )}
+
+                      {m.status !== "streaming" ? (
+                        <div className="mt-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void copyMessage(m.id, m.content)}
+                            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] text-white/45 hover:text-white hover:bg-white/8 transition-colors"
+                            title="Copy response"
+                          >
+                            {copiedMessageId === m.id ? <FiCheck className="h-3.5 w-3.5 text-emerald-400" /> : <FiCopy className="h-3.5 w-3.5" />}
+                            {copiedMessageId === m.id ? "Copied" : "Copy"}
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
-                </div>
-              )}
+                );
+              })}
             </div>
+          ) : (
+            /* Welcome / empty state (Claude + Gemini flavored) */
+            <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+              <span className="grid place-items-center h-16 w-16 rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow-xl shadow-violet-500/30 animate-float">
+                <FiMessageSquare className="h-7 w-7 text-white" />
+              </span>
+              <h2 className="mt-6 text-2xl font-bold tracking-tight text-white">
+                Ask your <span className="gradient-text">knowledge base</span>
+              </h2>
+              <p className="mt-2 text-sm text-white/55 max-w-md">
+                {readyLibraries.length > 0
+                  ? "Pose a question and Synapse will answer from your selected libraries — with citations you can open."
+                  : "Process a library first, then come back to chat with your documents."}
+              </p>
+
+              {readyLibraries.length > 0 ? (
+                <div className="mt-7 grid w-full max-w-lg gap-2 sm:grid-cols-2">
+                  {suggestions.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setPrompt(s)}
+                      className="rounded-xl glass hover-glow px-4 py-3 text-left text-sm text-white/75 transition-all"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+
+        {/* Composer (bottom — Claude/GPT/Gemini convention) */}
+        <div className="relative border-t border-white/10 px-3 sm:px-6 py-4">
+          {/* Library picker popup (opens upward, dark surface) */}
+          {libraryPickerOpen ? (
+            <div className="absolute bottom-[calc(100%-0.5rem)] left-3 sm:left-6 z-40 w-[min(420px,calc(100vw-32px))] overflow-hidden rounded-2xl surface-menu">
+              <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-white/40">Libraries</div>
+                  <div className="mt-0.5 text-sm font-medium text-white/90 truncate">{selectedLibrariesLabel}</div>
+                </div>
+                <button
+                  type="button"
+                  className="grid place-items-center h-7 w-7 rounded-lg text-white/50 hover:text-white hover:bg-white/8 transition-colors"
+                  onClick={() => setLibraryPickerOpen(false)}
+                >
+                  <FiX className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="max-h-64 overflow-auto synapse-scroll p-1.5">
+                {readyLibraries.length === 0 ? (
+                  <div className="px-3 py-4 text-sm text-white/45">No processed libraries yet.</div>
+                ) : (
+                  readyLibraries.map((l) => {
+                    const checked = selectedSet.has(l.id);
+                    return (
+                      <button
+                        key={l.id}
+                        type="button"
+                        onClick={() => toggleLibrary(l.id)}
+                        className={`w-full flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${
+                          checked ? "bg-white/8 text-white" : "text-white/70 hover:bg-white/6"
+                        }`}
+                      >
+                        <span className="truncate flex items-center gap-2">
+                          <FiBookOpen className={`h-3.5 w-3.5 ${checked ? "text-violet-300" : "text-white/35"}`} />
+                          {l.name}
+                        </span>
+                        {checked ? <FiCheck className="h-4 w-4 text-violet-300 shrink-0" /> : null}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              <div className="border-t border-white/10 px-4 py-2 text-[11px] text-white/40">
+                Pick multiple libraries to broaden context.
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mx-auto w-full max-w-3xl">
+            <div className="flex items-end gap-2 rounded-2xl glass-strong glass-hi px-3 py-2.5 transition-all focus-within:border-violet-400/40">
+              <button
+                type="button"
+                onClick={() => setLibraryPickerOpen((v) => !v)}
+                className="grid place-items-center h-9 w-9 shrink-0 rounded-xl text-white/55 hover:text-white hover:bg-white/8 transition-colors"
+                title="Choose libraries"
+              >
+                <FiPlus className="h-5 w-5" />
+              </button>
+
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void send();
+                  }
+                }}
+                rows={1}
+                placeholder={readyLibraries.length > 0 ? "Ask anything across your libraries…" : "Process a library to start chatting…"}
+                className="synapse-scroll min-h-[2.25rem] max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm text-white placeholder:text-white/40 outline-none"
+                disabled={readyLibraries.length === 0}
+              />
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (thinking) stop();
+                  else void send();
+                }}
+                disabled={!thinking && !canSend}
+                className={`grid place-items-center h-9 w-9 shrink-0 rounded-xl transition-all ${
+                  thinking
+                    ? "bg-rose-500/15 text-rose-200 hover:bg-rose-500/25"
+                    : canSend
+                    ? "btn-grad text-white"
+                    : "bg-white/5 text-white/30"
+                } disabled:opacity-60`}
+                title={thinking ? "Stop" : "Send"}
+              >
+                {thinking ? <FiSquare className="h-4 w-4" /> : <FiArrowUp className="h-4 w-4" />}
+              </button>
+            </div>
+            <p className="mt-2 text-center text-[11px] text-white/30">
+              Synapse can make mistakes. Verify important answers with the cited sources.
+            </p>
           </div>
         </div>
       </div>
