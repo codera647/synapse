@@ -154,7 +154,8 @@ def _ungrounded_answer_prompt(user_query: str, convo: str) -> List[Dict[str, str
         "Be clear and helpful.\n"
         "Do NOT claim you quoted or verified anything from the user's PDFs.\n"
     )
-    user = f"{(convo + '\\n\\n') if convo else ''}USER_QUERY:\n{user_query}\n"
+    convo_prefix = (convo + "\n\n") if convo else ""
+    user = f"{convo_prefix}USER_QUERY:\n{user_query}\n"
     return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
 
 def _conversation_prefix(summary: Optional[str], history: Optional[List[Dict[str, str]]]) -> str:
