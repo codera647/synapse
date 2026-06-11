@@ -1,0 +1,27 @@
+{
+  // Cloudflare Workers config for the Synapse Next.js frontend (via OpenNext).
+  // Docs: https://opennext.js.org/cloudflare
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "synapse-web",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-03-25",
+  // nodejs_compat is REQUIRED — Synapse's API routes use Node APIs
+  // (Buffer in the Google Drive callback, the Supabase admin client, etc.).
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".open-next/assets"
+  },
+  "observability": {
+    "enabled": true
+  }
+
+  // --- Environment variables ---
+  // Do NOT hardcode secrets here. Set them in the Cloudflare dashboard
+  // (Workers & Pages -> synapse-web -> Settings -> Variables and Secrets),
+  // or for local preview put them in `.dev.vars` (gitignored). Required keys:
+  //   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  //   SUPABASE_SERVICE_ROLE_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+  //   NEXT_PUBLIC_GOOGLE_CLIENT_ID, NEXT_PUBLIC_GOOGLE_API_KEY,
+  //   NEXT_PUBLIC_APP_URL, BACKEND_API_URL
+}
