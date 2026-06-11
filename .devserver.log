@@ -91,3 +91,16 @@
  GET /api/backend/hardware 502 in 22ms (compile: 5ms, render: 17ms)
  GET /dashboard 200 in 19ms (compile: 2ms, render: 17ms)
 ✓ Compiled in 217ms
+✓ Compiled in 241ms
+✓ Compiled in 177ms
+✓ Compiled in 193ms
+ GET /new-organization 200 in 172ms (compile: 55ms, render: 117ms)
+ GET /new-organization 200 in 25ms (compile: 4ms, render: 21ms)
+ GET /api/backend/hardware 502 in 66ms (compile: 13ms, render: 53ms)
+ GET /api/backend/hardware 502 in 39ms (compile: 4ms, render: 36ms)
+✓ Compiled in 883ms
+✓ Compiled in 453ms
+✓ Compiled in 371ms
+✓ Compiled in 531ms
+ GET /dashboard 200 in 661ms (compile: 290ms, render: 372ms)
+ GET /dashboard?tab=chat 200 in 35ms (compile: 8ms, render: 27ms)
