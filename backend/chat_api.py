@@ -10,7 +10,14 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from chat_runtime import build_evidence_brief, embed_query, hydrate_doc_titles, retrieve_chunks
+from chat_runtime import (
+    build_context_document,
+    build_evidence_brief,
+    embed_query,
+    hydrate_doc_titles,
+    retrieve_chunks,
+)
+from chat_agents import extract_notes, merge_notes, plan_query
 
 load_env()
 
@@ -249,298 +256,100 @@ def compact_slash(req: CompactRequest):
         return _error_response(exc, "/chat/compact/")
 
 
-def _chat_impl(req: ChatRequest):
-    if not req.organization_id or not req.message.strip():
-        raise HTTPException(status_code=400, detail="Missing organization_id or message.")
-    if not req.library_ids:
-        raise HTTPException(status_code=400, detail="Select at least one processed library.")
+def _retrieve_rows(
+    organization_id: str,
+    library_ids: List[str],
+    query_text: str,
+    query_embedding: List[float],
+    top_k: int,
+    hop: int,
+    worker_ctx: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Run one retrieval round for a single (sub-)query.
 
-    top_k = max(3, min(int(req.top_k or 10), _max_topk_cap()))
-    max_hops = max(0, min(int(req.max_hops or 2), _max_hops_cap()))
-
-    use_workers = str(os.getenv("CHAT_USE_WORKERS", "1")).strip() not in {"0", "false", "False"}
-
+    Prefers the durable worker queue (parallel vector + keyword + cross-encoder rerank) when a
+    worker context is available, and transparently falls back to inline retrieval against the
+    same database if workers are unavailable or return nothing. Used by both the initial hop and
+    every curiosity hop, so the orchestration above stays mode-agnostic.
+    """
     rows: List[Dict[str, Any]] = []
-    followups: List[Dict[str, Any]] = []
-
-    convo = _conversation_prefix(req.thread_summary, req.history)
-    server_prompt_hash = hashlib.sha1((req.message or "").strip().encode("utf-8")).hexdigest()
-
-    if use_workers:
+    if worker_ctx:
         try:
-            from chat_queue import (
-                create_chat_job,
-                enqueue_retrieval_tasks,
-                wait_hop_results,
-                mark_chat_job_done,
-                mark_chat_job_failed,
-            )
-
-            job = create_chat_job(req.organization_id, req.library_ids, req.message, top_k=top_k, max_hops=max_hops)
-            chat_job_id = str(job.get("id"))
-
-            client = _get_openai_client()
-            model = _gpt_model()
-
-            # hop 0 retrieval tasks (vector + keyword)
-            qvec = embed_query(req.message)
-            enqueue_retrieval_tasks(
-                chat_job_id,
-                req.organization_id,
-                req.library_ids,
-                hop=0,
-                query_text=req.message,
-                query_embedding=qvec,
+            worker_ctx["enqueue"](
+                worker_ctx["job_id"],
+                organization_id,
+                library_ids,
+                hop=hop,
+                query_text=query_text,
+                query_embedding=query_embedding,
                 kinds=["vector", "keyword"],
                 top_k=top_k,
             )
-            results = wait_hop_results(chat_job_id, hop=0, kinds=["vector", "keyword"], timeout_s=float(os.getenv("CHAT_HOP_TIMEOUT", "20")))
+            results = worker_ctx["wait"](
+                worker_ctx["job_id"],
+                hop=hop,
+                kinds=["vector", "keyword"],
+                timeout_s=float(os.getenv("CHAT_HOP_TIMEOUT", "20")),
+            )
             for r in results:
                 for ch in (r.get("chunks") or []):
                     if isinstance(ch, dict):
                         rows.append(ch)
-
-            if not rows:
-                ans = client.chat.completions.create(
-                    model=model,
-                    messages=_ungrounded_answer_prompt(req.message, convo),
-                    temperature=0.3,
-                    max_tokens=int(os.getenv("CHAT_MAX_TOKENS", "700")),
-                )
-                answer = (ans.choices[0].message.content or "").strip()
-                payload = {
-                    "answer": answer,
-                    "sources": [],
-                    "followups": [],
-                    "client_request_id": req.client_request_id,
-                    "client_prompt_hash": req.client_prompt_hash,
-                    "server_prompt_hash": server_prompt_hash,
-                }
-                mark_chat_job_done(chat_job_id, payload)
-                return payload
-
-            # Curious hop loop: GPT decides follow-up; workers fetch; repeat.
-            # Attach doc titles early so the LLM can cite by PDF name (not internal ids).
-            doc_ids0 = sorted({str(r.get("doc_id")) for r in rows if str(r.get("doc_id") or "")})
-            meta0 = hydrate_doc_titles(doc_ids0)
-            for rr in rows:
-                did = str(rr.get("doc_id") or "")
-                if did and did in meta0:
-                    rr["doc_title"] = meta0[did].get("doc_title") or None
-            evidence = build_evidence_brief(rows)
-            for hop in range(max_hops):
-                dec = client.chat.completions.create(
-                    model=model,
-                    messages=_followup_decision_prompt(req.message, (convo + "\n\n" + evidence).strip() if convo else evidence),
-                    temperature=0.2,
-                    max_tokens=350,
-                )
-                content = (dec.choices[0].message.content or "").strip()
-                j = _json_extract(content)
-                next_action = str(j.get("next_action") or "").upper()
-                if next_action == "NA":
-                    break
-                if next_action != "FOLLOWUP":
-                    break
-                fq = str(j.get("followup_query") or "").strip()
-                if not fq:
-                    break
-                followups.append({"hop": hop + 1, "query": fq})
-
-                fq_vec = embed_query(fq)
-                enqueue_retrieval_tasks(
-                    chat_job_id,
-                    req.organization_id,
-                    req.library_ids,
-                    hop=hop + 1,
-                    query_text=fq,
-                    query_embedding=fq_vec,
-                    kinds=["vector", "keyword"],
-                    top_k=max(3, top_k // 2),
-                )
-                hop_results = wait_hop_results(chat_job_id, hop=hop + 1, kinds=["vector", "keyword"], timeout_s=float(os.getenv("CHAT_HOP_TIMEOUT", "20")))
-                seen = {str(r.get("chunk_id")) for r in rows if r.get("chunk_id")}
-                for hr in hop_results:
-                    for ch in (hr.get("chunks") or []):
-                        if not isinstance(ch, dict):
-                            continue
-                        cid = str(ch.get("chunk_id") or "")
-                        if cid and cid in seen:
-                            continue
-                        rows.append(ch)
-                        if cid:
-                            seen.add(cid)
-
-                # Re-hydrate doc titles as we add more rows.
-                doc_ids_h = sorted({str(r.get("doc_id")) for r in rows if str(r.get("doc_id") or "")})
-                meta_h = hydrate_doc_titles(doc_ids_h)
-                for rr in rows:
-                    did = str(rr.get("doc_id") or "")
-                    if did and did in meta_h:
-                        rr["doc_title"] = meta_h[did].get("doc_title") or None
-                evidence = build_evidence_brief(rows)
-
-            ans = client.chat.completions.create(
-                model=model,
-                messages=_final_answer_prompt(req.message, (convo + "\n\n" + evidence).strip() if convo else evidence),
-                temperature=0.2,
-                max_tokens=int(os.getenv("CHAT_MAX_TOKENS", "700")),
-            )
-            answer = (ans.choices[0].message.content or "").strip()
-            # UI renders sources separately; strip any inline "(Source: ...)" the model might emit.
-            answer = re.sub(r"\(\s*Source\s*:[^)]+\)", "", answer, flags=re.IGNORECASE).strip()
-            answer, sources_used = _strip_and_detect_sources_used(answer)
-
-            # Hydrate sources
-            doc_ids = [str(r.get("doc_id")) for r in rows if r.get("doc_id")]
-            meta = hydrate_doc_titles(doc_ids)
-            sources = []
-            for r in rows[: min(len(rows), 20)]:
-                did = str(r.get("doc_id") or "")
-                m = meta.get(did) or {}
-                sources.append(
-                    {
-                        "library_id": r.get("library_id"),
-                        "doc_id": r.get("doc_id"),
-                        "doc_title": m.get("doc_title"),
-                        "storage_path_raw": m.get("storage_path_raw"),
-                        "path_in_source": m.get("path_in_source"),
-                        "gdrive_file_id": m.get("gdrive_file_id"),
-                        "page_start": r.get("page_start"),
-                        "page_end": r.get("page_end"),
-                        "chunk_id": r.get("chunk_id"),
-                        "score": r.get("score"),
-                    }
-                )
-
-            # Show sources if either:
-            # 1) the model says it used evidence, OR
-            # 2) retrieval confidence is high (prevents hiding sources due to a bad self-report).
-            retrieval_confident = _max_row_score(rows) >= _min_source_score()
-            if not sources_used and not retrieval_confident:
-                sources = []
-
-            payload = {
-                "answer": answer,
-                "sources": sources,
-                "followups": followups,
-                "client_request_id": req.client_request_id,
-                "client_prompt_hash": req.client_prompt_hash,
-                "server_prompt_hash": server_prompt_hash,
-            }
-            mark_chat_job_done(chat_job_id, payload)
-            return payload
-        except Exception as exc:
-            try:
-                # Best-effort: mark job failed if it exists
-                mark_chat_job_failed(chat_job_id, str(exc))  # type: ignore[name-defined]
-            except Exception:
-                pass
-            # fall back to inline mode
-            use_workers = False
-
-    # Inline fallback (no queue tables / workers)
-    # Provide the query text as a last-resort hint for keyword fallback inside chat_runtime.
-    os.environ["CHAT_LAST_QUERY_TEXT"] = req.message
-    qvec = embed_query(req.message)
-    rows = retrieve_chunks(req.organization_id, req.library_ids, qvec, top_k=top_k)
-    if not rows:
-        # Keyword fallback when vector RPC isn't installed yet.
-        try:
-            from chat_runtime import keyword_search_chunks
-            rows = keyword_search_chunks(req.organization_id, req.library_ids, req.message, top_k=top_k)
+            if rows:
+                return rows
         except Exception:
             rows = []
 
+    # Inline fallback (no queue tables / workers, or workers returned nothing).
+    os.environ["CHAT_LAST_QUERY_TEXT"] = query_text
+    rows = retrieve_chunks(organization_id, library_ids, query_embedding, top_k=top_k)
     if not rows:
-        ans = client.chat.completions.create(
-            model=model,
-            messages=_ungrounded_answer_prompt(req.message, convo),
-            temperature=0.3,
-            max_tokens=int(os.getenv("CHAT_MAX_TOKENS", "700")),
-        )
-        answer = (ans.choices[0].message.content or "").strip()
-        return {
-            "answer": answer,
-            "sources": [],
-            "followups": [],
-            "client_request_id": req.client_request_id,
-            "client_prompt_hash": req.client_prompt_hash,
-            "server_prompt_hash": server_prompt_hash,
-        }
+        try:
+            from chat_runtime import keyword_search_chunks
 
-    client = _get_openai_client()
-    model = _gpt_model()
+            rows = keyword_search_chunks(organization_id, library_ids, query_text, top_k=top_k)
+        except Exception:
+            rows = []
+    return rows
 
-    # CuriousLLM-style hop loop (small, budgeted)
-    doc_ids0 = sorted({str(r.get("doc_id")) for r in rows if str(r.get("doc_id") or "")})
-    meta0 = hydrate_doc_titles(doc_ids0)
+
+def _hydrate_titles(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Attach doc_title to each row (so the LLM cites PDF names) and return the full doc meta map."""
+    doc_ids = sorted({str(r.get("doc_id")) for r in rows if str(r.get("doc_id") or "")})
+    meta = hydrate_doc_titles(doc_ids)
     for rr in rows:
         did = str(rr.get("doc_id") or "")
-        if did and did in meta0:
-            rr["doc_title"] = meta0[did].get("doc_title") or None
-    evidence = build_evidence_brief(rows)
-    for hop in range(max_hops):
-        dec = client.chat.completions.create(
-            model=model,
-            messages=_followup_decision_prompt(req.message, (convo + "\n\n" + evidence).strip() if convo else evidence),
-            temperature=0.2,
-            max_tokens=350,
-        )
-        content = (dec.choices[0].message.content or "").strip()
-        j = _json_extract(content)
-        next_action = str(j.get("next_action") or "").upper()
-        if next_action == "NA":
-            break
-        if next_action != "FOLLOWUP":
-            # If model returns something unexpected, stop rather than looping.
-            break
-        fq = str(j.get("followup_query") or "").strip()
-        if not fq:
-            break
-        followups.append({"hop": hop + 1, "query": fq})
-        fq_vec = embed_query(fq)
-        more = retrieve_chunks(req.organization_id, req.library_ids, fq_vec, top_k=max(3, top_k // 2))
-        # Merge (dedupe by chunk_id)
-        seen = {str(r.get("chunk_id")) for r in rows if r.get("chunk_id")}
-        for r in more:
-            cid = str(r.get("chunk_id") or "")
-            if cid and cid in seen:
-                continue
-            rows.append(r)
-            if cid:
-                seen.add(cid)
-        doc_ids_h = sorted({str(r.get("doc_id")) for r in rows if str(r.get("doc_id") or "")})
-        meta_h = hydrate_doc_titles(doc_ids_h)
-        for rr in rows:
-            did = str(rr.get("doc_id") or "")
-            if did and did in meta_h:
-                rr["doc_title"] = meta_h[did].get("doc_title") or None
-        evidence = build_evidence_brief(rows)
+        if did and did in meta:
+            rr["doc_title"] = meta[did].get("doc_title") or None
+    return meta
 
-    # Final answer
-    ans = client.chat.completions.create(
-        model=model,
-        messages=_final_answer_prompt(req.message, (convo + "\n\n" + evidence).strip() if convo else evidence),
-        temperature=0.2,
-        max_tokens=int(os.getenv("CHAT_MAX_TOKENS", "700")),
-    )
-    answer = (ans.choices[0].message.content or "").strip()
-    answer = re.sub(r"\(\s*Source\s*:[^)]+\)", "", answer, flags=re.IGNORECASE).strip()
-    answer, sources_used = _strip_and_detect_sources_used(answer)
 
-    # Hydrate sources
-    doc_ids = [str(r.get("doc_id")) for r in rows if r.get("doc_id")]
-    meta = hydrate_doc_titles(doc_ids)
-    sources = []
-    for r in rows[: min(len(rows), 20)]:
+def _build_sources_from(
+    items: List[Dict[str, Any]],
+    meta: Dict[str, Dict[str, Any]],
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    """
+    Build the source PDF list from notes (preferred — only the docs actually cited) or rows.
+    Dedupes by chunk_id (falling back to doc+page), preserving order, and hydrates the gdrive /
+    storage fields the frontend uses to open the source PDF.
+    """
+    sources: List[Dict[str, Any]] = []
+    seen = set()
+    for r in items:
+        cid = str(r.get("chunk_id") or "")
+        key = cid or f"{r.get('doc_id')}:{r.get('page_start')}:{r.get('page_end')}"
+        if key in seen:
+            continue
+        seen.add(key)
         did = str(r.get("doc_id") or "")
         m = meta.get(did) or {}
         sources.append(
             {
                 "library_id": r.get("library_id"),
                 "doc_id": r.get("doc_id"),
-                "doc_title": m.get("doc_title"),
+                "doc_title": m.get("doc_title") or r.get("doc_title"),
                 "storage_path_raw": m.get("storage_path_raw"),
                 "path_in_source": m.get("path_in_source"),
                 "gdrive_file_id": m.get("gdrive_file_id"),
@@ -550,19 +359,206 @@ def _chat_impl(req: ChatRequest):
                 "score": r.get("score"),
             }
         )
+        if len(sources) >= limit:
+            break
+    return sources
 
-    retrieval_confident = _max_row_score(rows) >= _min_source_score()
-    if not sources_used and not retrieval_confident:
-        sources = []
 
-    return {
-        "answer": answer,
-        "sources": sources,
-        "followups": followups,
-        "client_request_id": req.client_request_id,
-        "client_prompt_hash": req.client_prompt_hash,
-        "server_prompt_hash": server_prompt_hash,
-    }
+def _chat_impl(req: ChatRequest):
+    """
+    Multi-agent retrieval pipeline (Phase 1).
+
+      Planner (classify + rewrite + retrieval gate)
+        -> Retriever (workers or inline, hop 0)
+        -> Extractor (distill chunks into source-anchored notes)
+        -> [ CuriousLLM hop controller -> Retriever -> Extractor ] x max_hops
+        -> Context-Document builder
+        -> Synthesizer (final grounded answer)
+        -> source PDFs (only the docs that contributed evidence)
+
+    Response contract is unchanged (answer/sources/followups/*_hash) plus an additive
+    `query_class` field for debugging/demo. See docs/retrieval-pipeline-design.md.
+    """
+    if not req.organization_id or not req.message.strip():
+        raise HTTPException(status_code=400, detail="Missing organization_id or message.")
+    if not req.library_ids:
+        raise HTTPException(status_code=400, detail="Select at least one processed library.")
+
+    top_k = max(3, min(int(req.top_k or 10), _max_topk_cap()))
+    max_hops = max(0, min(int(req.max_hops or 2), _max_hops_cap()))
+    convo = _conversation_prefix(req.thread_summary, req.history)
+    server_prompt_hash = hashlib.sha1((req.message or "").strip().encode("utf-8")).hexdigest()
+    extractor_on = str(os.getenv("CHAT_ENABLE_EXTRACTOR", "1")).strip() not in {"0", "false", "False"}
+    max_tokens = int(os.getenv("CHAT_MAX_TOKENS", "700"))
+
+    org = req.organization_id
+    libs = req.library_ids
+
+    client = _get_openai_client()
+    model = _gpt_model()
+
+    followups: List[Dict[str, Any]] = []
+
+    # --- Planner: chain-of-thought classify + query rewrite + retrieval gate.
+    plan = plan_query(client, req.message, convo)
+    query_class = plan.get("query_class") or "SPOTLIGHT"
+    search_query = plan.get("search_query") or req.message
+
+    def _ungrounded_payload() -> Dict[str, Any]:
+        ans = client.chat.completions.create(
+            model=model,
+            messages=_ungrounded_answer_prompt(req.message, convo),
+            temperature=0.3,
+            max_tokens=max_tokens,
+        )
+        answer = (ans.choices[0].message.content or "").strip()
+        return {
+            "answer": answer,
+            "sources": [],
+            "followups": [],
+            "query_class": query_class,
+            "client_request_id": req.client_request_id,
+            "client_prompt_hash": req.client_prompt_hash,
+            "server_prompt_hash": server_prompt_hash,
+        }
+
+    # Conversational queries (greetings/meta) skip retrieval entirely.
+    if not plan.get("needs_retrieval", True):
+        return _ungrounded_payload()
+
+    # --- Worker context (optional; _retrieve_rows falls back to inline transparently).
+    use_workers = str(os.getenv("CHAT_USE_WORKERS", "1")).strip() not in {"0", "false", "False"}
+    worker_ctx: Optional[Dict[str, Any]] = None
+    chat_job_id: Optional[str] = None
+    mark_chat_job_done = None
+    mark_chat_job_failed = None
+    if use_workers:
+        try:
+            from chat_queue import (
+                create_chat_job,
+                enqueue_retrieval_tasks,
+                wait_hop_results,
+                mark_chat_job_done as _mark_done,
+                mark_chat_job_failed as _mark_failed,
+            )
+
+            job = create_chat_job(org, libs, req.message, top_k=top_k, max_hops=max_hops)
+            chat_job_id = str(job.get("id"))
+            worker_ctx = {"job_id": chat_job_id, "enqueue": enqueue_retrieval_tasks, "wait": wait_hop_results}
+            mark_chat_job_done = _mark_done
+            mark_chat_job_failed = _mark_failed
+        except Exception:
+            worker_ctx = None
+            chat_job_id = None
+
+    try:
+        # --- Retriever (hop 0): use the rewritten search query.
+        qvec = embed_query(search_query)
+        rows = _retrieve_rows(org, libs, search_query, qvec, top_k, 0, worker_ctx)
+        if not rows:
+            payload = _ungrounded_payload()
+            if mark_chat_job_done and chat_job_id:
+                try:
+                    mark_chat_job_done(chat_job_id, payload)
+                except Exception:
+                    pass
+            return payload
+
+        meta = _hydrate_titles(rows)
+
+        # --- Extractor: distill hop-0 evidence into source-anchored notes.
+        notes: List[Dict[str, Any]] = (
+            extract_notes(client, search_query, rows, sub_query=search_query) if extractor_on else []
+        )
+        context_doc = build_context_document(notes) or build_evidence_brief(rows)
+
+        # --- CuriousLLM hop loop: GPT decides a follow-up; retrieve + extract; repeat.
+        for hop in range(max_hops):
+            dec = client.chat.completions.create(
+                model=model,
+                messages=_followup_decision_prompt(
+                    req.message, (convo + "\n\n" + context_doc).strip() if convo else context_doc
+                ),
+                temperature=0.2,
+                max_tokens=350,
+            )
+            j = _json_extract((dec.choices[0].message.content or "").strip())
+            next_action = str(j.get("next_action") or "").upper()
+            if next_action != "FOLLOWUP":
+                # NA / unexpected -> early termination (CuriousLLM).
+                break
+            fq = str(j.get("followup_query") or "").strip()
+            if not fq:
+                break
+            followups.append({"hop": hop + 1, "query": fq})
+
+            fq_vec = embed_query(fq)
+            more = _retrieve_rows(org, libs, fq, fq_vec, max(3, top_k // 2), hop + 1, worker_ctx)
+
+            # Merge new chunks (dedupe by chunk_id).
+            seen = {str(r.get("chunk_id")) for r in rows if r.get("chunk_id")}
+            fresh: List[Dict[str, Any]] = []
+            for r in more:
+                cid = str(r.get("chunk_id") or "")
+                if cid and cid in seen:
+                    continue
+                rows.append(r)
+                fresh.append(r)
+                if cid:
+                    seen.add(cid)
+
+            if fresh:
+                meta = _hydrate_titles(rows)
+                if extractor_on:
+                    notes = merge_notes(notes, extract_notes(client, fq, fresh, sub_query=fq))
+                context_doc = build_context_document(notes) or build_evidence_brief(rows)
+
+        # --- Synthesizer: final grounded answer from the context document.
+        ans = client.chat.completions.create(
+            model=model,
+            messages=_final_answer_prompt(
+                req.message, (convo + "\n\n" + context_doc).strip() if convo else context_doc
+            ),
+            temperature=0.2,
+            max_tokens=max_tokens,
+        )
+        answer = (ans.choices[0].message.content or "").strip()
+        # UI renders sources separately; strip any inline "(Source: ...)" the model might emit.
+        answer = re.sub(r"\(\s*Source\s*:[^)]+\)", "", answer, flags=re.IGNORECASE).strip()
+        answer, sources_used = _strip_and_detect_sources_used(answer)
+
+        # --- Sources: prefer the docs that actually contributed notes; fall back to all rows.
+        source_items = notes if notes else rows
+        sources = _build_sources_from(source_items, meta, limit=20)
+
+        # Show sources if the model says it used evidence OR retrieval confidence is high
+        # (prevents hiding sources due to a bad self-report).
+        retrieval_confident = _max_row_score(rows) >= _min_source_score()
+        if not sources_used and not retrieval_confident:
+            sources = []
+
+        payload = {
+            "answer": answer,
+            "sources": sources,
+            "followups": followups,
+            "query_class": query_class,
+            "client_request_id": req.client_request_id,
+            "client_prompt_hash": req.client_prompt_hash,
+            "server_prompt_hash": server_prompt_hash,
+        }
+        if mark_chat_job_done and chat_job_id:
+            try:
+                mark_chat_job_done(chat_job_id, payload)
+            except Exception:
+                pass
+        return payload
+    except Exception as exc:
+        if mark_chat_job_failed and chat_job_id:
+            try:
+                mark_chat_job_failed(chat_job_id, str(exc))
+            except Exception:
+                pass
+        raise
 
 
 @router.post("/chat")

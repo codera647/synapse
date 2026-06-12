@@ -1,5 +1,6 @@
 import os
 import json
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 from env_bootstrap import load_env
@@ -340,3 +341,52 @@ def build_evidence_brief(rows: List[Dict[str, Any]], max_chars: int = 14000) -> 
         parts.append(block)
         used += len(block) + 2
     return "\n\n".join(parts)
+
+
+def build_context_document(notes: List[Dict[str, Any]], max_chars: int = 14000) -> str:
+    """
+    Build the *consolidated context document* fed to the Synthesizer.
+
+    Unlike build_evidence_brief (which dumps raw chunk text), this takes the distilled
+    notes produced by the Extractor agent (chat_agents.extract_notes) and renders them as
+    short, source-anchored bullet points grouped by the sub-question they answer. This is the
+    "extract-then-consolidate" novelty: GPT sees compact, attributed evidence rather than
+    long raw passages, which reduces lost-in-the-middle errors and makes citations precise.
+
+    Each note dict is expected to carry: text, doc_title, page_start, page_end, and optionally
+    sub_query and visual_ids. Falls back gracefully if fields are missing.
+    """
+    if not notes:
+        return ""
+
+    # Group notes by the sub-question they were extracted for (preserve first-seen order).
+    groups: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
+    for n in notes:
+        sq = str(n.get("sub_query") or "").strip() or "Main question"
+        groups.setdefault(sq, []).append(n)
+
+    lines: List[str] = ["CONTEXT DOCUMENT (distilled, source-anchored evidence):"]
+    used = len(lines[0])
+    for sq, items in groups.items():
+        header = f"\n## {sq}"
+        if used + len(header) > max_chars:
+            break
+        lines.append(header)
+        used += len(header)
+        for n in items:
+            text = str(n.get("text") or "").strip()
+            if not text:
+                continue
+            title = str(n.get("doc_title") or "").strip() or "Untitled PDF"
+            p1 = n.get("page_start")
+            p2 = n.get("page_end")
+            vis = n.get("visual_ids")
+            vis_tag = ""
+            if isinstance(vis, list) and vis:
+                vis_tag = f", {len(vis)} figure/table"
+            block = f"- {text}\n  (source: {title}, p.{p1}-{p2}{vis_tag})"
+            if used + len(block) + 1 > max_chars:
+                break
+            lines.append(block)
+            used += len(block) + 1
+    return "\n".join(lines)
