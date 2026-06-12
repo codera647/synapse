@@ -14,7 +14,12 @@
   },
   "observability": {
     "enabled": true
-  }
+  },
+
+  // Manage runtime env vars + secrets from the Cloudflare dashboard.
+  // keep_vars stops `wrangler deploy` from wiping dashboard-set vars/secrets
+  // that aren't declared in this file.
+  "keep_vars": true
 
   // --- Environment variables ---
   // Do NOT hardcode secrets here. Set them in the Cloudflare dashboard
