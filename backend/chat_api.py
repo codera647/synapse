@@ -14,6 +14,7 @@ from chat_runtime import (
     build_context_document,
     build_evidence_brief,
     embed_query,
+    fetch_chunk_visuals,
     hydrate_doc_titles,
     retrieve_chunks,
 )
@@ -50,7 +51,7 @@ def _get_openai_client():
 
 
 def _gpt_model() -> str:
-    return (os.getenv("CHAT_GPT_MODEL") or "gpt-4o-mini").strip() or "gpt-4o-mini"
+    return (os.getenv("CHAT_GPT_MODEL") or "gpt-5.5-2026-04-23").strip() or "gpt-5.5-2026-04-23"
 
 def _max_hops_cap() -> int:
     try:
@@ -154,7 +155,22 @@ def _followup_decision_prompt(user_query: str, convo: str, evidence: str) -> Lis
     return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
 
 
-def _final_answer_prompt(user_query: str, convo: str, evidence: str) -> List[Dict[str, str]]:
+def _final_answer_prompt(
+    user_query: str,
+    convo: str,
+    evidence: str,
+    visuals: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, str]]:
+    visual_rule = ""
+    if visuals:
+        visual_rule = (
+            "Some figures/tables from the sources are listed under AVAILABLE_VISUALS (each has an id "
+            "and caption). If a visual genuinely helps answer, EMBED it inline by writing a marker on "
+            "its own line exactly: [[VISUAL:<id>]] — placed right after the sentence or paragraph it "
+            "illustrates — and add one short sentence explaining what it shows. Use at most 3 visuals, "
+            "only when clearly relevant. Use ONLY ids from AVAILABLE_VISUALS; never invent an id. If "
+            "none are relevant, embed none.\n"
+        )
     sys = (
         "You are Synapse.\n"
         "Answer the USER_QUERY using the EVIDENCE (facts retrieved from the user's PDFs).\n"
@@ -165,13 +181,20 @@ def _final_answer_prompt(user_query: str, convo: str, evidence: str) -> List[Dic
         "Write a helpful answer, not just a single-line definition.\n"
         "If the user asks for a definition/acronym expansion, include 2-4 extra sentences of nearby context or practical meaning when possible.\n"
         "If helpful, include 2-5 short bullet points (e.g. why it matters, common pitfalls, where it appears).\n"
-        "Do NOT mention whether you did or did not find information in the user's PDFs.\n"
+        + visual_rule
+        + "Do NOT mention whether you did or did not find information in the user's PDFs.\n"
         "Do NOT add inline citations like '(Source: ...)'. Sources are shown separately in the UI.\n"
         "Do NOT include chunk_id, doc_id, library_id, embedding ids, or any internal identifiers in the answer.\n"
         "Be concise.\n"
         "At the very end, output a single line exactly: SOURCES_USED: yes|no (yes only if you actually used the EVIDENCE).\n"
     )
     user = _compose_user_prompt(user_query, convo, evidence)
+    if visuals:
+        lines = ["AVAILABLE_VISUALS (figures/tables you may embed with [[VISUAL:id]]):"]
+        for v in visuals:
+            cap = str(v.get("caption") or "").strip() or f"{v.get('kind') or 'figure'}"
+            lines.append(f"[{v.get('visual_id')}] {cap} (from {v.get('doc_title') or 'PDF'}, p.{v.get('page')})")
+        user = user + "\n" + "\n".join(lines) + "\n"
     return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
 
 
@@ -553,10 +576,20 @@ def _chat_impl(req: ChatRequest):
                     notes = merge_notes(notes, extract_notes(client, fq, fresh, sub_query=fq))
                 context_doc = build_context_document(notes) or build_evidence_brief(rows)
 
-        # --- Synthesizer: final grounded answer from the context document.
+        # --- Gather figures/tables attached to the evidence chunks, to offer the synthesizer.
+        source_items = notes if notes else rows
+        available_visuals: List[Dict[str, Any]] = []
+        if str(os.getenv("CHAT_ENABLE_VISUALS", "1")).strip() not in {"0", "false", "False"}:
+            try:
+                vis_chunk_ids = [str(it.get("chunk_id")) for it in source_items if it.get("chunk_id")]
+                available_visuals = fetch_chunk_visuals(vis_chunk_ids)
+            except Exception:
+                available_visuals = []
+
+        # --- Synthesizer: final grounded answer from the context document (+ inline visuals).
         ans = client.chat.completions.create(
             model=model,
-            messages=_final_answer_prompt(req.message, convo, context_doc),
+            messages=_final_answer_prompt(req.message, convo, context_doc, visuals=available_visuals or None),
             temperature=0.2,
             max_tokens=max_tokens,
         )
@@ -565,8 +598,36 @@ def _chat_impl(req: ChatRequest):
         answer = re.sub(r"\(\s*Source\s*:[^)]+\)", "", answer, flags=re.IGNORECASE).strip()
         answer, sources_used = _strip_and_detect_sources_used(answer)
 
+        # --- Resolve the [[VISUAL:id]] markers the model placed: keep valid ones, strip the rest.
+        visuals_out: List[Dict[str, Any]] = []
+        if available_visuals:
+            vis_by_id = {str(v.get("visual_id")): v for v in available_visuals}
+            referenced = [m.strip() for m in re.findall(r"\[\[VISUAL:([^\]]+)\]\]", answer)]
+            valid_ids: List[str] = []
+            for vid in referenced:
+                v = vis_by_id.get(vid)
+                if v and vid not in valid_ids and len(valid_ids) < 3:
+                    valid_ids.append(vid)
+                    visuals_out.append(
+                        {
+                            "visual_id": v.get("visual_id"),
+                            "visual_key": v.get("visual_key"),
+                            "caption": v.get("caption"),
+                            "page": v.get("page"),
+                            "kind": v.get("kind"),
+                            "doc_id": v.get("doc_id"),
+                            "doc_title": v.get("doc_title"),
+                        }
+                    )
+            valid_set = set(valid_ids)
+            # Strip any marker that didn't resolve (hallucinated id or over the cap).
+            answer = re.sub(
+                r"[ \t]*\[\[VISUAL:([^\]]+)\]\][ \t]*",
+                lambda m: m.group(0) if m.group(1).strip() in valid_set else "",
+                answer,
+            ).strip()
+
         # --- Sources: prefer the docs that actually contributed notes; fall back to all rows.
-        source_items = notes if notes else rows
         sources = _build_sources_from(source_items, meta, limit=20)
 
         # Show sources if the model says it used evidence OR retrieval confidence is high
@@ -578,6 +639,7 @@ def _chat_impl(req: ChatRequest):
         payload = {
             "answer": answer,
             "sources": sources,
+            "visuals": visuals_out,
             "followups": followups,
             "query_class": query_class,
             "client_request_id": req.client_request_id,

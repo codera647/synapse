@@ -34,7 +34,7 @@ QUERY_CLASSES = (
 
 def _model_for(role_env: str) -> str:
     """Resolve the model for an agent role, falling back to the shared chat model."""
-    base = (os.getenv("CHAT_GPT_MODEL") or "gpt-4o-mini").strip() or "gpt-4o-mini"
+    base = (os.getenv("CHAT_GPT_MODEL") or "gpt-5.5-2026-04-23").strip() or "gpt-5.5-2026-04-23"
     return (os.getenv(role_env) or base).strip() or base
 
 

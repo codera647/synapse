@@ -402,6 +402,47 @@ def r2_delete_prefix(req: DeletePrefixRequest):
     return {"ok": not errors, "deleted": deleted_total, "prefixes": prefixes, "errors": errors}
 
 
+@router.get("/visual/file")
+def visual_file(key: str = Query(..., description="R2 key under visuals/")):
+    """
+    Stream a visual (figure/table/chart PNG) from R2 so it can be embedded inline in an answer.
+    Only keys under the `visuals/` prefix are allowed.
+    """
+    k = (key or "").strip().lstrip("/")
+    if not k.startswith("visuals/") or ".." in k:
+        raise HTTPException(status_code=400, detail="Invalid visual key.")
+    if not _R2_BUCKET:
+        raise HTTPException(status_code=500, detail="R2_BUCKET not configured")
+    try:
+        obj = s3.get_object(Bucket=_R2_BUCKET, Key=k)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"Visual not found: {exc}")
+
+    body = obj["Body"]
+
+    def _iter(chunk_size: int = 65536):
+        try:
+            while True:
+                data = body.read(chunk_size)
+                if not data:
+                    break
+                yield data
+        finally:
+            try:
+                body.close()
+            except Exception:
+                pass
+
+    media = str(obj.get("ContentType") or "image/png")
+    if "image" not in media:
+        media = "image/png"
+    return StreamingResponse(
+        _iter(),
+        media_type=media,
+        headers={"Cache-Control": "private, max-age=600"},
+    )
+
+
 @router.get("/document/chunk")
 def document_chunk(chunk_id: str = Query(..., description="chunk_embeddings.chunk_id")):
     """

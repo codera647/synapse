@@ -3,6 +3,7 @@ import json
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
+import boto3
 from env_bootstrap import load_env
 from supabase import create_client
 
@@ -19,6 +20,26 @@ def _get_env(name: str) -> str:
 SUPABASE_URL = _get_env("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = _get_env("SUPABASE_SERVICE_ROLE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+# R2 (read-only here) — used to pull per-document visual manifests for inline answer figures.
+_R2_BUCKET = os.getenv("R2_BUCKET") or ""
+_s3 = boto3.client(
+    "s3",
+    endpoint_url=(os.getenv("R2_ENDPOINT") or None),
+    aws_access_key_id=(os.getenv("R2_ACCESS_KEY") or None),
+    aws_secret_access_key=(os.getenv("R2_SECRET_KEY") or None),
+)
+
+
+def fetch_r2_json(key: str) -> Optional[Dict[str, Any]]:
+    """Best-effort read of a JSON object from R2 (returns None on any failure)."""
+    if not key or not _R2_BUCKET:
+        return None
+    try:
+        obj = _s3.get_object(Bucket=_R2_BUCKET, Key=key)
+        return json.loads(obj["Body"].read())
+    except Exception:
+        return None
 
 
 _embedder = None
@@ -452,4 +473,104 @@ def fetch_chunk_snippets(chunk_ids: List[str], edge_chars: int = 220) -> Dict[st
                 out[src_cid]["before"] = txt[-edge_chars:]
             else:
                 out[src_cid]["after"] = txt[:edge_chars]
+    return out
+
+
+def _visual_caption(block: Dict[str, Any]) -> str:
+    """Pull a short human caption for a visual from its manifest block."""
+    if not isinstance(block, dict):
+        return ""
+    s = block.get("summary") if isinstance(block.get("summary"), dict) else {}
+    short = str((s or {}).get("short_caption") or "").strip()
+    if short:
+        return short[:300]
+    ct = str(block.get("caption_text") or "").strip()
+    if ct:
+        return ct[:300]
+    bullets = (s or {}).get("bullets") or []
+    if isinstance(bullets, list) and bullets:
+        return str(bullets[0]).strip()[:300]
+    kind = str(block.get("kind") or block.get("type") or "figure").title()
+    pg = block.get("page")
+    return f"{kind}{f' (page {pg})' if pg is not None else ''}"
+
+
+def fetch_chunk_visuals(chunk_ids: List[str], max_visuals: int = 12) -> List[Dict[str, Any]]:
+    """
+    For the given chunks, return the figures/tables/charts attached to them — each with its R2
+    image key, a human caption (from the per-document visuals manifest), page, and source doc.
+    Used to offer the synthesizer relevant visuals it can embed inline in the answer.
+
+    Returns a deduped, ordered list of:
+      {visual_id, visual_key, caption, page, kind, doc_id, doc_title}
+    """
+    ids = [str(c) for c in (chunk_ids or []) if str(c or "")]
+    if not ids:
+        return []
+
+    try:
+        res = (
+            supabase.table("chunk_embeddings")
+            .select("chunk_id,organization_id,library_id,doc_id,visual_ids,visual_keys")
+            .in_("chunk_id", ids)
+            .execute()
+        )
+    except Exception:
+        return []
+
+    visuals: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+    docs: Dict[str, Tuple[str, str]] = {}
+    for r in (res.data or []):
+        if not isinstance(r, dict):
+            continue
+        org = str(r.get("organization_id") or "")
+        lib = str(r.get("library_id") or "")
+        doc = str(r.get("doc_id") or "")
+        vids = r.get("visual_ids") or []
+        vkeys = r.get("visual_keys") or []
+        for i, vid in enumerate(vids):
+            vid = str(vid or "")
+            if not vid or vid in visuals:
+                continue
+            key = vkeys[i] if i < len(vkeys) else None
+            visuals[vid] = {
+                "visual_id": vid,
+                "visual_key": key,
+                "doc_id": doc,
+                "caption": "",
+                "page": None,
+                "kind": None,
+            }
+            if doc:
+                docs[doc] = (org, lib)
+
+    if not visuals:
+        return []
+
+    # Read each document's visuals manifest once to resolve captions/pages.
+    manifests: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for doc, (org, lib) in docs.items():
+        man = fetch_r2_json(f"visuals_manifest/{org}/{lib}/{doc}.json") or {}
+        blocks: Dict[str, Dict[str, Any]] = {}
+        for b in (man.get("blocks") or []):
+            if isinstance(b, dict) and b.get("block_id"):
+                blocks[str(b.get("block_id"))] = b
+        manifests[doc] = blocks
+
+    titles = hydrate_doc_titles(list(docs.keys()))
+
+    out: List[Dict[str, Any]] = []
+    for vid, v in visuals.items():
+        block = manifests.get(v["doc_id"], {}).get(vid) or {}
+        if not v.get("visual_key"):
+            v["visual_key"] = block.get("visual_key")
+        if not v.get("visual_key"):
+            continue  # no image to show
+        v["caption"] = _visual_caption(block)
+        v["page"] = block.get("page")
+        v["kind"] = block.get("kind") or block.get("type") or "figure"
+        v["doc_title"] = (titles.get(v["doc_id"]) or {}).get("doc_title")
+        out.append(v)
+        if len(out) >= max_visuals:
+            break
     return out

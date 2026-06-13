@@ -18,13 +18,9 @@ import {
   FiArrowUp,
   FiCheck,
 } from "react-icons/fi";
-import dynamic from "next/dynamic";
-import ChatMarkdown from "@/components/ChatMarkdown";
 import ChatMessageSources from "@/components/ChatMessageSources";
+import ChatAnswer, { type ChatVisual } from "@/components/ChatAnswer";
 import ContextMeter from "@/components/ContextMeter";
-
-// react-pdf renders only in the browser (no SSR).
-const PdfViewerModal = dynamic(() => import("@/components/PdfViewerModal"), { ssr: false });
 
 type LibraryLite = {
   id: string;
@@ -54,6 +50,7 @@ type ChatSource = {
 type ChatResponse = {
   answer: string;
   sources?: ChatSource[];
+  visuals?: ChatVisual[];
   followups?: Array<{ hop: number; query: string }>;
   client_request_id?: string | null;
   client_prompt_hash?: string | null;
@@ -106,6 +103,7 @@ type ChatMessage = {
   ts: number;
   status?: "draft" | "streaming" | "typing" | "done" | "stopped" | "error";
   sources?: ChatSource[];
+  visuals?: ChatVisual[];
   followups?: Array<{ hop: number; query: string }>;
 };
 
@@ -178,8 +176,6 @@ export default function ChatPanel({
   // True while context-window auto-compaction is summarizing a full chat and spawning the
   // linked continuation thread — drives the "starting a linked chat…" loading banner.
   const [compacting, setCompacting] = useState(false);
-  // The source whose PDF is open in the in-app viewer (null = closed).
-  const [pdfSource, setPdfSource] = useState<ChatSource | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [threadQuery, setThreadQuery] = useState("");
   const [historyOpen, setHistoryOpen] = useState(true);
@@ -656,10 +652,13 @@ export default function ChatPanel({
     }
   };
 
-  // Open the cited PDF inside the tool (in-app viewer), jumping to the cited page and highlighting
-  // the chunk. The viewer streams the raw file from R2 via /api/pdf.
+  // Open the source PDF in Google Drive (the in-app viewer was removed — the hover preview shows
+  // the cited passage). No-op if there's no resolvable Drive file id.
   const openSourcePdf = (s: ChatSource) => {
-    setPdfSource(s);
+    const id = String(s.gdrive_file_id || "").trim();
+    if (id) {
+      window.open(`https://drive.google.com/file/d/${encodeURIComponent(id)}/view`, "_blank", "noopener,noreferrer");
+    }
   };
 
   const send = async () => {
@@ -908,6 +907,9 @@ export default function ChatPanel({
 
       const answer = typeof payload?.answer === "string" ? payload.answer : JSON.stringify(payload, null, 2);
       const sources = Array.isArray(payload?.sources) ? payload.sources : [];
+      const visuals: ChatVisual[] = Array.isArray((payload as ChatResponse)?.visuals)
+        ? ((payload as ChatResponse).visuals as ChatVisual[])
+        : [];
       const followups: Array<{ hop: number; query: string }> = Array.isArray((payload as ChatResponse)?.followups)
         ? ((payload as ChatResponse).followups as Array<{ hop: number; query: string }>)
         : [];
@@ -950,11 +952,11 @@ export default function ChatPanel({
       }
 
       onSources?.(sources);
-      patchMessage(tid, draftId, { status: "done", content: answer, sources, followups });
+      patchMessage(tid, draftId, { status: "done", content: answer, sources, visuals, followups });
       onLog?.({
         level: "success",
         message: "Chat: response received",
-        details: { sources: sources.length, followups: followups.length, stale_retries: staleAttempts },
+        details: { sources: sources.length, visuals: visuals.length, followups: followups.length, stale_retries: staleAttempts },
       });
 
       // Persist assistant message + sources.
@@ -1246,7 +1248,7 @@ export default function ChatPanel({
                         <TypingIndicator />
                       ) : (
                         <div className="rounded-2xl rounded-tl-md glass px-4 py-3">
-                          <ChatMarkdown content={m.content} />
+                          <ChatAnswer content={m.content} visuals={m.visuals} />
                           {m.status === "typing" ? (
                             <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-[2px] rounded-full bg-violet-300 animate-pulse" />
                           ) : null}
@@ -1430,14 +1432,6 @@ export default function ChatPanel({
           </div>
         </div>
       </div>
-
-      {pdfSource ? (
-        <PdfViewerModal
-          source={pdfSource}
-          organizationId={organization?.id ?? null}
-          onClose={() => setPdfSource(null)}
-        />
-      ) : null}
     </div>
   );
 }

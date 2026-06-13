@@ -55,24 +55,24 @@ function SourcePreview({ s, resolved }: { s: ChatSource; resolved?: ChunkContext
   const after = (s.context_after || resolved?.after || "").trim();
   return (
     <div className="pointer-events-none absolute bottom-full left-0 z-30 mb-2 w-[min(380px,80vw)] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-      <div className="surface-menu rounded-xl p-3 text-left shadow-2xl shadow-black/50">
-        <div className="mb-1.5 flex items-center gap-2 text-[10px] text-white/45">
-          <FiFileText className="h-3 w-3 text-violet-300" />
+      <div className="rounded-xl border border-violet-400/50 bg-gradient-to-br from-[#251c4d] to-[#1b1330] p-3 text-left shadow-[0_10px_40px_rgba(139,92,246,0.4)] ring-1 ring-violet-500/30">
+        <div className="mb-1.5 flex items-center gap-2 text-[10px] text-violet-200/70">
+          <FiFileText className="h-3 w-3 text-fuchsia-300" />
           <span className="truncate">{prettyTitle(s.doc_title || s.storage_path_raw)}</span>
           {typeof s.page_start === "number" ? (
-            <span className="ml-auto shrink-0 rounded bg-white/8 px-1.5 py-0.5">p.{s.page_start}</span>
+            <span className="ml-auto shrink-0 rounded bg-violet-500/25 px-1.5 py-0.5 text-violet-100">p.{s.page_start}</span>
           ) : null}
         </div>
         {snippet ? (
-          <p className="max-h-44 overflow-hidden text-[11px] leading-relaxed text-white/55">
-            {before ? <span className="text-white/35">…{before} </span> : null}
-            <span className="rounded bg-violet-400/20 px-0.5 text-white/90">{snippet}</span>
-            {after ? <span className="text-white/35"> {after}…</span> : null}
+          <p className="max-h-44 overflow-hidden text-[11px] leading-relaxed text-violet-100/70">
+            {before ? <span className="text-violet-200/40">…{before} </span> : null}
+            <span className="rounded bg-fuchsia-400/30 px-0.5 font-medium text-white">{snippet}</span>
+            {after ? <span className="text-violet-200/40"> {after}…</span> : null}
           </p>
         ) : (
-          <p className="text-[11px] italic text-white/40">Loading preview…</p>
+          <p className="text-[11px] italic text-violet-200/50">Loading preview…</p>
         )}
-        <div className="mt-2 text-[9px] uppercase tracking-wide text-white/30">Click to open in viewer</div>
+        <div className="mt-2 text-[9px] uppercase tracking-wide text-violet-300/40">Cited passage from this source</div>
       </div>
     </div>
   );
@@ -159,7 +159,7 @@ export default function ChatMessageSources({
                 type="button"
                 onClick={() => onClickSource?.(s)}
                 className="block w-full rounded-xl border border-white/10 bg-black/10 px-2.5 py-2 text-left hover:bg-white/5 hover:border-violet-400/30 transition-colors"
-                title="Open in viewer"
+                title={driveHref ? "Open source PDF" : "Hover to preview the cited passage"}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -168,23 +168,11 @@ export default function ChatMessageSources({
                       {page ? <span>{page}</span> : null}
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    {driveHref ? (
-                      <a
-                        href={driveHref}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        onClick={(e) => e.stopPropagation()}
-                        className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
-                        title="Open in Google Drive"
-                      >
-                        <FiExternalLink className="h-3.5 w-3.5" />
-                      </a>
-                    ) : null}
-                    <span className="grid h-8 w-8 place-items-center rounded-lg border border-violet-400/20 bg-violet-500/10 text-violet-200">
-                      <FiFileText className="h-4 w-4" />
+                  {driveHref ? (
+                    <span className="shrink-0 grid h-8 w-8 place-items-center rounded-lg border border-white/10 bg-white/5 text-gray-400 transition-colors group-hover:border-violet-400/30 group-hover:text-violet-200">
+                      <FiExternalLink className="h-3.5 w-3.5" />
                     </span>
-                  </div>
+                  ) : null}
                 </div>
               </button>
             </div>
