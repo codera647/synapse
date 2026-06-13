@@ -97,7 +97,7 @@ type ChatMessage = {
   role: "user" | "assistant" | "system";
   content: string;
   ts: number;
-  status?: "draft" | "streaming" | "done" | "stopped" | "error";
+  status?: "draft" | "streaming" | "typing" | "done" | "stopped" | "error";
   sources?: ChatSource[];
   followups?: Array<{ hop: number; query: string }>;
 };
@@ -979,6 +979,35 @@ export default function ChatPanel({
 
       lastAnswerRef.current = answer;
       lastPromptRef.current = userText;
+
+      // Typewriter reveal (GPT/Claude style). The backend returns the whole answer at once (it's
+      // only produced at the final synthesis step), so we animate it in on the client. Reveal in
+      // word chunks sized to finish in ~1.2s regardless of length. Sources/followups are attached
+      // only on the final "done" patch, so they appear after the text finishes typing.
+      const typewriterOn = (process.env.NEXT_PUBLIC_CHAT_TYPEWRITER ?? "1") !== "0";
+      if (typewriterOn && answer.trim().length > 0) {
+        const tokens = answer.split(/(\s+)/); // keep whitespace tokens so spacing is preserved
+        const wordCount = tokens.filter((t) => t.trim().length > 0).length;
+        const chunk = Math.max(1, Math.ceil(wordCount / 70)); // ~70 frames ≈ 1.2s
+        let shown = "";
+        let wordsThisFrame = 0;
+        for (let i = 0; i < tokens.length; i++) {
+          if (ac.signal.aborted) break;
+          shown += tokens[i];
+          if (tokens[i].trim().length > 0) wordsThisFrame += 1;
+          if (wordsThisFrame >= chunk || i === tokens.length - 1) {
+            patchMessage(tid, draftId, { status: "typing", content: shown });
+            wordsThisFrame = 0;
+            await new Promise((r) => setTimeout(r, 16));
+          }
+        }
+      }
+
+      if (ac.signal.aborted) {
+        // User hit Stop mid-typing; stop() already set the message. Leave it as-is.
+        return;
+      }
+
       onSources?.(sources);
       patchMessage(tid, draftId, { status: "done", content: answer, sources, followups });
       onLog?.({
@@ -1258,6 +1287,9 @@ export default function ChatPanel({
                       ) : (
                         <div className="rounded-2xl rounded-tl-md glass px-4 py-3">
                           <ChatMarkdown content={m.content} />
+                          {m.status === "typing" ? (
+                            <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-[2px] rounded-full bg-violet-300 animate-pulse" />
+                          ) : null}
                           {(m.sources?.length || 0) > 0 ? (
                             <ChatMessageSources sources={m.sources || []} onClickSource={(s) => void openSourcePdf(s)} />
                           ) : null}
@@ -1269,7 +1301,7 @@ export default function ChatPanel({
                         </div>
                       )}
 
-                      {m.status !== "streaming" ? (
+                      {m.status !== "streaming" && m.status !== "typing" ? (
                         <div className="mt-2 flex items-center gap-2">
                           <button
                             type="button"
