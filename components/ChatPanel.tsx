@@ -712,6 +712,20 @@ export default function ChatPanel({
 
     const userText = prompt.trim();
     setPrompt("");
+
+    // Add the user message in the SAME synchronous batch as setPrompt("") — i.e. BEFORE any
+    // await below — so the context ring doesn't briefly dip. Clearing the draft removes its
+    // tokens; counting the just-sent message adds them right back in the same render, so the
+    // gauge stays steady on Enter and only rises once the answer arrives.
+    const userMsg: ChatMessage = {
+      id: makeId(),
+      role: "user",
+      content: userText,
+      ts: Date.now(),
+      status: "done",
+    };
+    pushMessage(tid, userMsg);
+
     const clientRequestId =
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
@@ -726,15 +740,6 @@ export default function ChatPanel({
         return null;
       }
     })();
-
-    const userMsg: ChatMessage = {
-      id: makeId(),
-      role: "user",
-      content: userText,
-      ts: Date.now(),
-      status: "done",
-    };
-    pushMessage(tid, userMsg);
 
     // Persist user message (best effort).
     if (organization?.id) {
