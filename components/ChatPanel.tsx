@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   FiChevronLeft,
@@ -59,6 +59,8 @@ type Thread = {
   updatedAt: number;
   lastSnippet: string;
   selectedLibraryIds?: string[];
+  parentThreadId?: string | null;
+  rootThreadId?: string | null;
 };
 
 type ThreadRow = {
@@ -66,6 +68,8 @@ type ThreadRow = {
   title: string | null;
   updated_at: string | null;
   selected_library_ids: string[] | null;
+  parent_thread_id?: string | null;
+  root_thread_id?: string | null;
 };
 
 type MessageRow = {
@@ -200,6 +204,9 @@ export default function ChatPanel({
 
   const [prompt, setPrompt] = useState("");
   const [thinking, setThinking] = useState(false);
+  // True while context-window auto-compaction is summarizing a full chat and spawning the
+  // linked continuation thread — drives the "starting a linked chat…" loading banner.
+  const [compacting, setCompacting] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [threadQuery, setThreadQuery] = useState("");
   const [historyOpen, setHistoryOpen] = useState(true);
@@ -234,6 +241,46 @@ export default function ChatPanel({
     return list.filter((t) => `${t.title} ${t.lastSnippet}`.toLowerCase().includes(q));
   }, [threads, threadQuery]);
 
+  // Group threads into lineages (a chat + the continuation chats auto-spawned when its context
+  // filled). Produces a flat, ordered list where each row knows its position in its lineage, so
+  // the sidebar can draw a connected timeline (main → child → grandchild).
+  const threadTree = useMemo(() => {
+    const byId = new Map(threads.map((t) => [t.id, t]));
+    const lineageKey = (t: Thread) => t.rootThreadId || t.id;
+    const depthOf = (t: Thread) => {
+      let d = 0;
+      let cur: Thread | undefined = t;
+      const seen = new Set<string>();
+      while (cur?.parentThreadId && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        cur = byId.get(cur.parentThreadId);
+        d += 1;
+        if (d > 50) break;
+      }
+      return d;
+    };
+
+    const groups = new Map<string, Thread[]>();
+    for (const t of threads) {
+      const k = lineageKey(t);
+      const arr = groups.get(k) ?? [];
+      arr.push(t);
+      groups.set(k, arr);
+    }
+
+    const ordered = [...groups.values()].sort(
+      (a, b) => Math.max(...b.map((t) => t.updatedAt)) - Math.max(...a.map((t) => t.updatedAt)),
+    );
+
+    // One entry per lineage, each a list of its threads ordered root → continuation(s).
+    const lineages: { thread: Thread; idxInLineage: number; lineageSize: number }[][] = [];
+    for (const arr of ordered) {
+      const sorted = [...arr].sort((a, b) => depthOf(a) - depthOf(b) || a.updatedAt - b.updatedAt);
+      lineages.push(sorted.map((t, i) => ({ thread: t, idxInLineage: i, lineageSize: sorted.length })));
+    }
+    return lineages;
+  }, [threads]);
+
   const selectedSet = useMemo(() => new Set(selectedLibraryIds), [selectedLibraryIds]);
   const selectedLibrariesLabel = useMemo(() => {
     if (selectedLibraryIds.length === 0) return "Select libraries";
@@ -254,7 +301,7 @@ export default function ChatPanel({
     if (!organization?.id) return;
     const { data, error } = await supabase
       .from("chat_threads")
-      .select("id, title, updated_at, selected_library_ids")
+      .select("id, title, updated_at, selected_library_ids, parent_thread_id, root_thread_id")
       .eq("organization_id", organization.id)
       .order("updated_at", { ascending: false })
       .limit(80);
@@ -271,6 +318,8 @@ export default function ChatPanel({
       updatedAt: new Date(String(r.updated_at || new Date().toISOString())).getTime(),
       lastSnippet: "",
       selectedLibraryIds: Array.isArray(r.selected_library_ids) ? r.selected_library_ids.map(String) : [],
+      parentThreadId: r.parent_thread_id ? String(r.parent_thread_id) : null,
+      rootThreadId: r.root_thread_id ? String(r.root_thread_id) : null,
     }));
     setThreads(list);
     if (!activeThreadId && list[0]?.id) setActiveThreadId(list[0].id);
@@ -428,7 +477,11 @@ export default function ChatPanel({
     return { summary: payload.summary, title: payload.title || "Continuation" };
   };
 
-  const createThreadWithTitle = async (title: string, summary: string | null) => {
+  const createThreadWithTitle = async (
+    title: string,
+    summary: string | null,
+    lineage?: { parentThreadId: string; rootThreadId: string },
+  ) => {
     if (!organization?.id) return null;
     const { data: userRes } = await supabase.auth.getUser();
     const uid = userRes?.user?.id;
@@ -442,8 +495,10 @@ export default function ChatPanel({
         title: title || "New chat",
         selected_library_ids: selectedLibraryIds,
         updated_at: new Date().toISOString(),
+        parent_thread_id: lineage?.parentThreadId ?? null,
+        root_thread_id: lineage?.rootThreadId ?? null,
       })
-      .select("id, title, updated_at, selected_library_ids")
+      .select("id, title, updated_at, selected_library_ids, parent_thread_id, root_thread_id")
       .single();
 
     if (error || !data?.id) {
@@ -458,6 +513,8 @@ export default function ChatPanel({
       updatedAt: new Date(String(data.updated_at || new Date().toISOString())).getTime(),
       lastSnippet: "",
       selectedLibraryIds: Array.isArray(data.selected_library_ids) ? data.selected_library_ids.map(String) : [],
+      parentThreadId: data.parent_thread_id ? String(data.parent_thread_id) : null,
+      rootThreadId: data.root_thread_id ? String(data.root_thread_id) : null,
     };
     setThreads((prev) => [t, ...prev]);
     setActiveThreadId(tid);
@@ -698,14 +755,30 @@ export default function ChatPanel({
 
     if (sizeTokens > budgetTokens && organization?.id) {
       onLog?.({ level: "info", message: "Chat: context budget hit, compacting…" });
-      const comp = await compactThread(tid);
-      if (comp?.summary) {
-        const nextTitle = comp.title || "Continuation";
-        const newTid = await createThreadWithTitle(nextTitle, comp.summary);
-        if (newTid) {
-          tid = newTid;
-          onLog?.({ level: "success", message: "Chat: started continuation thread", details: { thread_id: tid } });
+      setCompacting(true);
+      try {
+        const comp = await compactThread(tid);
+        if (comp?.summary) {
+          const nextTitle = comp.title || "Continuation";
+          // Link the new continuation chat to the chat it was spawned from, and to the lineage
+          // root (so the sidebar can draw main → child → grandchild).
+          const parentThread = threads.find((t) => t.id === tid);
+          const rootId = parentThread?.rootThreadId || tid;
+          const newTid = await createThreadWithTitle(nextTitle, comp.summary, {
+            parentThreadId: tid,
+            rootThreadId: rootId,
+          });
+          if (newTid) {
+            tid = newTid;
+            onLog?.({
+              level: "success",
+              message: "Chat: started linked continuation thread",
+              details: { thread_id: tid, parent_thread_id: parentThread?.id, root_thread_id: rootId },
+            });
+          }
         }
+      } finally {
+        setCompacting(false);
       }
     }
 
@@ -1000,6 +1073,65 @@ export default function ChatPanel({
     "Explain this topic with citations.",
   ];
 
+  // One sidebar chat row. `rail` is the optional left connector column drawn for lineages
+  // (a chat + its auto-spawned continuation chats).
+  const renderThreadRow = (t: Thread, rail: ReactNode = null) => {
+    const active = t.id === activeThreadId;
+    return (
+      <div
+        key={t.id}
+        className={`group flex items-center gap-1 rounded-xl px-1 transition-colors ${
+          active ? "bg-gradient-to-r from-violet-500/20 to-fuchsia-500/10" : "hover:bg-white/6"
+        }`}
+      >
+        {rail}
+        <button
+          type="button"
+          onClick={() => setActiveThreadId(t.id)}
+          className="min-w-0 flex-1 px-2.5 py-2.5 text-left"
+        >
+          <div className={`truncate text-sm font-medium ${active ? "text-white" : "text-white/80"}`}>
+            {t.title}
+          </div>
+          <div className="mt-0.5 truncate text-[11px] text-white/40">
+            {t.lastSnippet || formatClock(t.updatedAt)}
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => void deleteThread(t.id)}
+          className="shrink-0 grid place-items-center h-7 w-7 rounded-lg text-white/30 opacity-0 group-hover:opacity-100 hover:text-rose-300 hover:bg-rose-500/12 transition-all"
+          title="Delete chat"
+        >
+          <FiTrash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    );
+  };
+
+  // The left connector rail for a thread inside a multi-chat lineage: a vertical line with a dot.
+  // Root chat gets a larger gradient dot; continuation chats get smaller dots, all joined.
+  const lineageRail = (idx: number, size: number) => {
+    if (size <= 1) return null;
+    const isFirst = idx === 0;
+    const isLast = idx === size - 1;
+    return (
+      <div className="relative w-5 shrink-0 self-stretch" aria-hidden>
+        {!isFirst && <span className="absolute left-1/2 top-0 h-1/2 w-px -translate-x-1/2 bg-white/15" />}
+        {!isLast && <span className="absolute left-1/2 bottom-0 h-1/2 w-px -translate-x-1/2 bg-white/15" />}
+        <span
+          className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full ${
+            isFirst
+              ? "h-2.5 w-2.5 bg-gradient-to-br from-violet-400 to-fuchsia-400 shadow-[0_0_0_3px_rgba(167,139,250,0.18)]"
+              : "h-2 w-2 bg-violet-300/70"
+          }`}
+        />
+      </div>
+    );
+  };
+
+  const searching = threadQuery.trim().length > 0;
+
   return (
     <div className="relative flex h-full overflow-hidden rounded-2xl surface-panel shadow-[0_18px_70px_rgba(0,0,0,0.35)]">
       {/* History rail (ChatGPT-style) */}
@@ -1025,42 +1157,27 @@ export default function ChatPanel({
           </div>
 
           <div className="synapse-scroll flex-1 overflow-auto px-2 pb-3">
-            {filteredThreads.length === 0 ? (
+            {threads.length === 0 ? (
               <div className="px-3 py-6 text-sm text-white/40">No chats yet.</div>
+            ) : searching ? (
+              // Flat results while searching (connectors only make sense in the full list).
+              filteredThreads.length === 0 ? (
+                <div className="px-3 py-6 text-sm text-white/40">No matching chats.</div>
+              ) : (
+                <div className="space-y-0.5">
+                  {filteredThreads.slice(0, 120).map((t) => renderThreadRow(t))}
+                </div>
+              )
             ) : (
-              <div className="space-y-0.5">
-                {filteredThreads.slice(0, 120).map((t) => {
-                  const active = t.id === activeThreadId;
-                  return (
-                    <div
-                      key={t.id}
-                      className={`group flex items-center gap-1 rounded-xl px-1 transition-colors ${
-                        active ? "bg-gradient-to-r from-violet-500/20 to-fuchsia-500/10" : "hover:bg-white/6"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setActiveThreadId(t.id)}
-                        className="min-w-0 flex-1 px-2.5 py-2.5 text-left"
-                      >
-                        <div className={`truncate text-sm font-medium ${active ? "text-white" : "text-white/80"}`}>
-                          {t.title}
-                        </div>
-                        <div className="mt-0.5 truncate text-[11px] text-white/40">
-                          {t.lastSnippet || formatClock(t.updatedAt)}
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void deleteThread(t.id)}
-                        className="shrink-0 grid place-items-center h-7 w-7 rounded-lg text-white/30 opacity-0 group-hover:opacity-100 hover:text-rose-300 hover:bg-rose-500/12 transition-all"
-                        title="Delete chat"
-                      >
-                        <FiTrash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  );
-                })}
+              // Lineage view: each chat + its auto-spawned continuation chats, connected.
+              <div className="space-y-1.5">
+                {threadTree.slice(0, 60).map((lineage) => (
+                  <div key={lineage[0].thread.id}>
+                    {lineage.map((item) =>
+                      renderThreadRow(item.thread, lineageRail(item.idxInLineage, item.lineageSize)),
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -1251,6 +1368,20 @@ export default function ChatPanel({
               </div>
             </div>
           ) : null}
+
+          {compacting && (
+            <div className="mx-auto mb-2 w-full max-w-3xl">
+              <div className="flex items-center gap-3 rounded-xl border border-violet-400/25 bg-violet-500/10 px-3.5 py-2.5">
+                <span className="h-4 w-4 shrink-0 rounded-full border-2 border-violet-300/40 border-t-violet-300 animate-spin" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-medium text-violet-100">Context window full — starting a linked chat…</div>
+                  <div className="mt-0.5 text-[11px] text-white/45">
+                    Summarizing this conversation, then continuing in a new connected thread. Your message will be answered there.
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="mx-auto w-full max-w-3xl">
             <div className="flex items-end gap-2 rounded-2xl glass-strong glass-hi px-3 py-2.5 transition-all focus-within:border-violet-400/40">
