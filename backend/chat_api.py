@@ -74,9 +74,9 @@ class ChatRequest(BaseModel):
 # Reasoning depth presets:
 #   (critic rounds, sub-query count, breadth top-k multiplier, answer max_tokens, detail level)
 THINKING_MODES = {
-    "low": (0, 0, 1.0, 900, "concise"),
-    "medium": (1, 2, 1.25, 1500, "balanced"),
-    "high": (2, 4, 1.5, 2600, "comprehensive"),
+    "low": (0, 0, 1.0, 1600, "concise"),
+    "medium": (1, 2, 1.25, 3200, "balanced"),
+    "high": (2, 4, 1.5, 5500, "comprehensive"),
 }
 
 class CompactRequest(BaseModel):
@@ -552,7 +552,7 @@ def _chat_impl(req: ChatRequest):
     convo = _conversation_prefix(req.thread_summary, req.history)
     server_prompt_hash = hashlib.sha1((req.message or "").strip().encode("utf-8")).hexdigest()
     extractor_on = str(os.getenv("CHAT_ENABLE_EXTRACTOR", "1")).strip() not in {"0", "false", "False"}
-    max_tokens = int(os.getenv("CHAT_MAX_TOKENS", "700"))
+    max_tokens = int(os.getenv("CHAT_MAX_TOKENS", "1500"))
 
     org = req.organization_id
     libs = req.library_ids

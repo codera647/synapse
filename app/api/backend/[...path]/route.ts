@@ -57,15 +57,14 @@ async function proxy(request: NextRequest, method: "GET" | "POST", path: string[
         init.body = await request.text();
     }
 
+    // Chat/compact can legitimately take a while (multi-agent reasoning + long answers); other
+    // endpoints should be snappy. The chat budget is env-tunable via BACKEND_CHAT_TIMEOUT_MS.
+    const joined = (path ?? []).join("/").toLowerCase();
+    const isChat = joined === "chat" || joined === "chat/compact";
+    const timeoutMs = isChat ? Number(process.env.BACKEND_CHAT_TIMEOUT_MS || 240000) : 10000;
+
     try {
         const controller = new AbortController();
-        // Some backend endpoints (chat, preprocessing orchestration) can legitimately take >10s.
-        // Keep a small default timeout for snappy status endpoints, but allow longer for chat.
-        const joined = (path ?? []).join("/").toLowerCase();
-        const timeoutMs =
-            joined === "chat" || joined === "chat/compact"
-                ? 120000
-                : 10000;
         const timeout = setTimeout(() => controller.abort(), timeoutMs);
         const response = await fetch(target, { ...init, signal: controller.signal });
         clearTimeout(timeout);
@@ -120,8 +119,8 @@ async function proxy(request: NextRequest, method: "GET" | "POST", path: string[
         return NextResponse.json(
             {
                 error: isTimeout
-                    ? "Backend request timed out (10s). Is your Colab backend running?"
-                    : "Unable to reach backend API. Check that your Colab backend is running and the URL in .env.local is correct.",
+                    ? `Backend request timed out after ${Math.round(timeoutMs / 1000)}s.`
+                    : "Unable to reach the backend. Make sure it's running and BACKEND_API_URL is correct.",
                 details: error instanceof Error ? error.message : "Unknown error",
                 target,
             },
