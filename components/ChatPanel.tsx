@@ -383,21 +383,23 @@ export default function ChatPanel({
   };
 
   // Live context-window usage — mirrors the exact budget math used in send() so the ring
-  // predicts when the thread will auto-summarize. Includes the in-progress prompt draft.
+  // predicts when the thread will auto-summarize. Measures the CUMULATIVE conversation
+  // (summary + every turn + the in-progress draft), so it grows monotonically as you chat and
+  // only drops when auto-compaction starts a fresh continuation thread — like the Claude meter.
+  // (Using a sliding window here made the number fluctuate down on each send.)
   const contextBudgetTokens = Number(process.env.NEXT_PUBLIC_CHAT_CONTEXT_BUDGET_TOKENS || 9000);
   const contextUsedTokens = (() => {
     const tid = activeThreadId;
     const summary = tid ? getThreadSummary(tid) || "" : "";
-    const recentTurns = tid
+    const allTurns = tid
       ? (messagesByThread[tid] ?? [])
           .filter((m) => m.role !== "system")
-          .slice(-18)
           .map((m) => `${m.role}: ${m.content}`)
           .join("\n")
       : "";
     return (
       approxTokensFromText(summary) +
-      approxTokensFromText(recentTurns) +
+      approxTokensFromText(allTurns) +
       approxTokensFromText(prompt)
     );
   })();
@@ -682,16 +684,17 @@ export default function ChatPanel({
 
     // Context window management (ChatGPT-style):
     // If the thread is too long, compact and start a continuation thread automatically.
+    // Measure the CUMULATIVE conversation (all turns) so this matches the context ring exactly
+    // and compaction triggers when the whole thread — not just a sliding window — gets large.
     const threadMsgs = messagesByThread[tid] ?? [];
     const summary = getThreadSummary(tid);
     const budgetTokens = Number(process.env.NEXT_PUBLIC_CHAT_CONTEXT_BUDGET_TOKENS || 9000);
-    const recentTurns = threadMsgs
+    const allTurns = threadMsgs
       .filter((m) => m.role !== "system")
-      .slice(-18)
       .map((m) => `${m.role}: ${m.content}`)
       .join("\n");
     const sizeTokens =
-      approxTokensFromText(summary || "") + approxTokensFromText(recentTurns) + approxTokensFromText(prompt);
+      approxTokensFromText(summary || "") + approxTokensFromText(allTurns) + approxTokensFromText(prompt);
 
     if (sizeTokens > budgetTokens && organization?.id) {
       onLog?.({ level: "info", message: "Chat: context budget hit, compacting…" });
