@@ -208,6 +208,9 @@ export default function ChatPanel({
   // Whether the chat is "stuck" to the bottom — true while the user is near the bottom, so the
   // view follows streaming/typing text. Set false when they scroll up to read history.
   const stickToBottomRef = useRef(true);
+  // Threads created in THIS session: their optimistic message state is authoritative, so we must
+  // not let loadMessages() refetch + overwrite them (which races and drops the just-sent message).
+  const createdLocallyRef = useRef<Set<string>>(new Set());
 
   const [prompt, setPrompt] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -545,6 +548,7 @@ export default function ChatPanel({
       parentThreadId: data.parent_thread_id ? String(data.parent_thread_id) : null,
       rootThreadId: data.root_thread_id ? String(data.root_thread_id) : null,
     };
+    createdLocallyRef.current.add(tid);
     setThreads((prev) => [t, ...prev]);
     setActiveThreadId(tid);
     setMessagesByThread((prev) => ({ ...prev, [tid]: [] }));
@@ -607,6 +611,7 @@ export default function ChatPanel({
       lastSnippet: "",
       selectedLibraryIds: Array.isArray(data.selected_library_ids) ? data.selected_library_ids.map(String) : [],
     };
+    createdLocallyRef.current.add(tid);
     setThreads((prev) => [t, ...prev]);
     setActiveThreadId(tid);
     setMessagesByThread((prev) => ({ ...prev, [tid]: [] }));
@@ -752,7 +757,8 @@ export default function ChatPanel({
       try {
         const comp = await compactThread(tid);
         if (comp?.summary) {
-          const nextTitle = comp.title || "Continuation";
+          // Title the continuation from the CURRENT message that's starting it (not the old summary).
+          const nextTitle = sourceText.trim().slice(0, 42) || comp.title || "Continuation";
           // Link the new continuation chat to the chat it was spawned from, and to the lineage
           // root (so the sidebar can draw main → child → grandchild).
           const parentThread = threads.find((t) => t.id === tid);
@@ -812,36 +818,8 @@ export default function ChatPanel({
       }
     })();
 
-    // Persist user message (best effort).
-    if (organization?.id) {
-      try {
-        await supabase.from("chat_messages").insert({
-          organization_id: organization.id,
-          thread_id: tid,
-          role: "user",
-          content: userText,
-          status: "done",
-        });
-
-        // Update thread title on first user message (best effort).
-        const currentThread = threads.find((t) => t.id === tid);
-        if (currentThread?.title === "New chat") {
-          await supabase
-            .from("chat_threads")
-            .update({ title: userText.slice(0, 42) || "New chat", updated_at: new Date().toISOString() })
-            .eq("id", tid)
-            .eq("organization_id", organization.id);
-        } else {
-          await supabase
-            .from("chat_threads")
-            .update({ updated_at: new Date().toISOString(), selected_library_ids: selectedLibraryIds })
-            .eq("id", tid)
-            .eq("organization_id", organization.id);
-        }
-      } catch (err) {
-        onLog?.({ level: "warn", message: "Chat: failed to persist user message", details: err });
-      }
-    }
+    // NOTE: the user message is persisted only on SUCCESS (see the persist block after the answer),
+    // so a failed turn leaves nothing behind on refresh — both the question and the error vanish.
 
     const draftId = makeId();
     assistantDraftIdRef.current = draftId;
@@ -1055,9 +1033,35 @@ export default function ChatPanel({
         details: { sources: sources.length, visuals: visuals.length, followups: followups.length, stale_retries: staleAttempts },
       });
 
-      // Persist assistant message + sources.
+      // Persist the user message + assistant message + sources — only now that the turn succeeded.
       if (organization?.id) {
         try {
+          // 1) Persist the user message (held back until success so failed turns leave nothing).
+          await supabase.from("chat_messages").insert({
+            organization_id: organization.id,
+            thread_id: tid,
+            role: "user",
+            content: userText,
+            status: "done",
+          });
+
+          // 2) Update the thread title (first message) / activity.
+          const currentThread = threads.find((t) => t.id === tid);
+          if (currentThread?.title === "New chat") {
+            await supabase
+              .from("chat_threads")
+              .update({ title: userText.slice(0, 42) || "New chat", updated_at: new Date().toISOString() })
+              .eq("id", tid)
+              .eq("organization_id", organization.id);
+          } else {
+            await supabase
+              .from("chat_threads")
+              .update({ updated_at: new Date().toISOString(), selected_library_ids: selectedLibraryIds })
+              .eq("id", tid)
+              .eq("organization_id", organization.id);
+          }
+
+          // 3) Persist the assistant message + its sources.
           const { data: inserted } = await supabase
             .from("chat_messages")
             .insert({
@@ -1126,6 +1130,9 @@ export default function ChatPanel({
 
   useEffect(() => {
     if (!activeThreadId) return;
+    // Threads created this session own their optimistic state — never refetch (it races with the
+    // in-flight send and would drop the just-sent user message).
+    if (createdLocallyRef.current.has(activeThreadId)) return;
     // If we already have messages loaded, don't refetch.
     if ((messagesByThread[activeThreadId] ?? []).length > 0) return;
     void loadMessages(activeThreadId);
