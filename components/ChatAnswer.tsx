@@ -1,6 +1,7 @@
 "use client";
 
-import ChatMarkdown from "@/components/ChatMarkdown";
+import { useMemo } from "react";
+import ChatMarkdown, { type Citation } from "@/components/ChatMarkdown";
 import { prettyTitle } from "@/components/ChatMessageSources";
 
 export type ChatVisual = {
@@ -11,6 +12,14 @@ export type ChatVisual = {
   kind?: string | null;
   doc_id?: string | null;
   doc_title?: string | null;
+};
+
+export type ChatCitation = {
+  n: number;
+  doc_id?: string | null;
+  doc_title?: string | null;
+  gdrive_file_id?: string | null;
+  page?: number | null;
 };
 
 const MARKER = /\[\[VISUAL:[^\]]+\]\]/g;
@@ -50,15 +59,32 @@ function VisualCard({ v }: { v: ChatVisual }) {
 export default function ChatAnswer({
   content,
   visuals,
+  citations,
 }: {
   content: string;
   visuals?: ChatVisual[] | null;
+  citations?: ChatCitation[] | null;
 }) {
+  // Build the inline-citation map (n -> chip label/title/url) for the renderer.
+  const citeMap = useMemo(() => {
+    const m: Record<string, Citation> = {};
+    for (const c of citations || []) {
+      const full = prettyTitle(c.doc_title || "") || "Source";
+      const label = full.length > 18 ? `${full.slice(0, 17).trim()}…` : full;
+      const id = String(c.gdrive_file_id || "").trim();
+      const url = /^[a-zA-Z0-9_-]{10,}$/.test(id)
+        ? `https://drive.google.com/file/d/${encodeURIComponent(id)}/view`
+        : null;
+      m[String(c.n)] = { label, title: full + (c.page != null ? `, p.${c.page}` : ""), url };
+    }
+    return m;
+  }, [citations]);
+
   const list = visuals || [];
   if (!list.length) {
-    // No visuals to place — hide any stray markers (e.g. while the answer is still typing).
+    // No visuals to place — hide any stray visual markers (e.g. while the answer is still typing).
     const cleaned = content.replace(MARKER, "").replace(/\n{3,}/g, "\n\n").trim();
-    return <ChatMarkdown content={cleaned} />;
+    return <ChatMarkdown content={cleaned} citations={citeMap} />;
   }
 
   const byId = new Map(list.map((v) => [String(v.visual_id), v]));
@@ -73,7 +99,7 @@ export default function ChatAnswer({
           return v ? <VisualCard key={`v${i}`} v={v} /> : null;
         }
         if (!part.trim()) return null;
-        return <ChatMarkdown key={`t${i}`} content={part} />;
+        return <ChatMarkdown key={`t${i}`} content={part} citations={citeMap} />;
       })}
     </div>
   );

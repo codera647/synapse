@@ -201,14 +201,37 @@ def _followup_decision_prompt(user_query: str, convo: str, evidence: str) -> Lis
 _DETAIL_RULES = {
     "concise": "Be concise and direct — answer in as few words as cover the question well.\n",
     "balanced": (
-        "Be thorough but focused: cover every part of the question with the relevant facts, and "
-        "use short bullet points or structure where it helps. Do not omit relevant detail.\n"
+        "Be thorough but focused: cover every part of the question with the relevant facts. Do not "
+        "omit relevant detail.\n"
     ),
     "comprehensive": (
-        "Be comprehensive: address EVERY part of the question with supporting detail, include the "
-        "key entities/numbers/comparisons, and organize the answer with clear structure (headings "
-        "and bullet points for multi-part answers). Prefer completeness over brevity, but never pad "
-        "with filler.\n"
+        "Be comprehensive: address EVERY part of the question with supporting detail and the key "
+        "entities/numbers/comparisons. Prefer completeness over brevity, but never pad with filler.\n"
+    ),
+}
+
+# How richly to format the answer (Markdown), scaled by the thinking mode.
+_FORMAT_RULES = {
+    "concise": (
+        "Format as light Markdown: **bold** key terms and use a short bullet list only if it helps.\n"
+    ),
+    "balanced": (
+        "Format as clean Markdown: use '##'/'###' headings if the answer has multiple parts, **bold** "
+        "key terms, bullet/numbered lists for enumerations and steps, and a Markdown table when "
+        "comparing things. Add a fenced code block with a small ASCII diagram (arrows/boxes, e.g. "
+        "`A -> B -> C`) when it makes a process or structure clearer.\n"
+    ),
+    "comprehensive": (
+        "Format the answer as polished, well-structured Markdown, like a great explainer:\n"
+        "- Organize with prominent '##' and '###' headings so it is easy to scan.\n"
+        "- **Bold** the key terms, names, and numbers.\n"
+        "- Use bullet or numbered lists for enumerations, steps, and pros/cons.\n"
+        "- When you explain a PROCESS, PIPELINE, ARCHITECTURE, or FLOW, include a simple ASCII diagram "
+        "inside a fenced code block (e.g. `User Query -> Retriever -> Top-K -> LLM -> Answer`, or "
+        "boxes/arrows) to make it visual.\n"
+        "- Use a Markdown table to COMPARE two or more things across attributes.\n"
+        "- Use '>' blockquotes for definitions or short illustrative examples.\n"
+        "- When the answer is long, finish with a short '## Summary'.\n"
     ),
 }
 
@@ -219,6 +242,7 @@ def _final_answer_prompt(
     evidence: str,
     visuals: Optional[List[Dict[str, Any]]] = None,
     detail: str = "balanced",
+    citations: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, str]]:
     visual_rule = ""
     if visuals:
@@ -230,6 +254,15 @@ def _final_answer_prompt(
             "only when clearly relevant. Use ONLY ids from AVAILABLE_VISUALS; never invent an id. If "
             "none are relevant, embed none.\n"
         )
+    if citations:
+        citation_rule = (
+            "Cite sources INLINE like reference chips: right after a sentence or claim that a source "
+            "supports, add a marker [[CITE:n]] using the number n from the SOURCES list. Cite the "
+            "specific source; one citation per claim is enough — do not over-cite. Use ONLY numbers "
+            "present in SOURCES, never invent one. Do NOT write '(Source: ...)' text.\n"
+        )
+    else:
+        citation_rule = "Do NOT add inline citations like '(Source: ...)'. Sources are shown separately.\n"
     sys = (
         "You are Synapse.\n"
         "Answer the USER_QUERY using the EVIDENCE (facts retrieved from the user's PDFs).\n"
@@ -237,12 +270,11 @@ def _final_answer_prompt(
         "Do NOT repeat, copy, or restate any earlier answer — write a NEW answer that directly "
         "addresses the current USER_QUERY.\n"
         "If the evidence is insufficient, answer using your general knowledge.\n"
-        "Write a helpful answer, not just a single-line definition.\n"
         "If the user asks for a definition/acronym expansion, include 2-4 extra sentences of nearby context or practical meaning when possible.\n"
-        "If helpful, include 2-5 short bullet points (e.g. why it matters, common pitfalls, where it appears).\n"
         + visual_rule
+        + _FORMAT_RULES.get(detail, _FORMAT_RULES["balanced"])
+        + citation_rule
         + "Do NOT mention whether you did or did not find information in the user's PDFs.\n"
-        "Do NOT add inline citations like '(Source: ...)'. Sources are shown separately in the UI.\n"
         "Do NOT include chunk_id, doc_id, library_id, embedding ids, or any internal identifiers in the answer.\n"
         + _DETAIL_RULES.get(detail, _DETAIL_RULES["balanced"])
         + "At the very end, output a single line exactly: SOURCES_USED: yes|no (yes only if you actually used the EVIDENCE).\n"
@@ -253,6 +285,13 @@ def _final_answer_prompt(
         for v in visuals:
             cap = str(v.get("caption") or "").strip() or f"{v.get('kind') or 'figure'}"
             lines.append(f"[{v.get('visual_id')}] {cap} (from {v.get('doc_title') or 'PDF'}, p.{v.get('page')})")
+        user = user + "\n" + "\n".join(lines) + "\n"
+    if citations:
+        lines = ["SOURCES (cite inline with [[CITE:n]] using these numbers):"]
+        for c in citations:
+            t = str(c.get("doc_title") or "Source")
+            pg = c.get("page")
+            lines.append(f"[{c.get('n')}] {t}" + (f", p.{pg}" if pg is not None else ""))
         user = user + "\n" + "\n".join(lines) + "\n"
     return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
 
@@ -659,20 +698,48 @@ def _chat_impl(req: ChatRequest):
             meta = _hydrate_titles(rows)
         context_doc = build_context_document(notes) or build_evidence_brief(rows)
 
-        def _synthesize(visuals: Optional[List[Dict[str, Any]]] = None) -> str:
+        inline_cites_on = str(os.getenv("CHAT_INLINE_CITATIONS", "1")).strip() not in {"0", "false", "False"}
+
+        def _build_cites() -> List[Dict[str, Any]]:
+            """Numbered list of the source documents currently in evidence (for inline [[CITE:n]])."""
+            out: List[Dict[str, Any]] = []
+            seen: set = set()
+            for it in (notes if notes else rows):
+                did = str(it.get("doc_id") or "")
+                if not did or did in seen:
+                    continue
+                seen.add(did)
+                m = meta.get(did) or {}
+                out.append(
+                    {
+                        "n": len(out) + 1,
+                        "doc_id": did,
+                        "doc_title": m.get("doc_title") or it.get("doc_title"),
+                        "gdrive_file_id": m.get("gdrive_file_id"),
+                        "page": it.get("page_start"),
+                    }
+                )
+                if len(out) >= 12:
+                    break
+            return out
+
+        def _synthesize(visuals: Optional[List[Dict[str, Any]]] = None,
+                        citations: Optional[List[Dict[str, Any]]] = None) -> str:
             out = client.chat.completions.create(
                 model=model,
                 messages=_final_answer_prompt(
-                    req.message, convo, context_doc, visuals=visuals or None, detail=mode_detail
+                    req.message, convo, context_doc, visuals=visuals or None,
+                    detail=mode_detail, citations=citations or None,
                 ),
                 temperature=0.2,
                 max_tokens=answer_max_tokens,
             )
             return (out.choices[0].message.content or "").strip()
 
-        # --- Draft answer (text-only).
+        # --- Draft answer.
         _set_progress(rid, "Drafting an answer")
-        draft = _synthesize()
+        final_cites = _build_cites() if inline_cites_on else []
+        draft = _synthesize(citations=final_cites)
 
         # --- Completeness-critic loop (complex queries only): find gaps -> retrieve -> revise.
         if complex_query and max_critic_rounds > 0:
@@ -691,7 +758,8 @@ def _chat_impl(req: ChatRequest):
                 _ingest_notes(req.message, round_fresh)
                 context_doc = build_context_document(notes) or build_evidence_brief(rows)
                 _set_progress(rid, "Revising the answer")
-                draft = _synthesize()  # revise with the augmented evidence
+                final_cites = _build_cites() if inline_cites_on else []
+                draft = _synthesize(citations=final_cites)  # revise with the augmented evidence
 
         # --- Gather figures/tables for the converged evidence, then do the FINAL synthesis with
         # inline visuals (one extra call only when there are visuals to place).
@@ -706,7 +774,8 @@ def _chat_impl(req: ChatRequest):
 
         if available_visuals:
             _set_progress(rid, "Writing the final answer with figures")
-            answer = _synthesize(visuals=available_visuals)
+            final_cites = _build_cites() if inline_cites_on else []
+            answer = _synthesize(visuals=available_visuals, citations=final_cites)
         else:
             answer = draft
         # UI renders sources separately; strip any inline "(Source: ...)" the model might emit.
@@ -742,6 +811,30 @@ def _chat_impl(req: ChatRequest):
                 answer,
             ).strip()
 
+        # --- Resolve the [[CITE:n]] inline source-reference markers: keep valid ones, strip the rest.
+        citations_out: List[Dict[str, Any]] = []
+        if final_cites:
+            cite_by_n = {str(c.get("n")): c for c in final_cites}
+            referenced = {m.strip() for m in re.findall(r"\[\[CITE:([^\]]+)\]\]", answer)}
+            for n in sorted(referenced, key=lambda x: int(x) if x.isdigit() else 9999):
+                c = cite_by_n.get(n)
+                if c:
+                    citations_out.append(
+                        {
+                            "n": c.get("n"),
+                            "doc_id": c.get("doc_id"),
+                            "doc_title": c.get("doc_title"),
+                            "gdrive_file_id": c.get("gdrive_file_id"),
+                            "page": c.get("page"),
+                        }
+                    )
+            valid_cite = set(cite_by_n.keys())
+            answer = re.sub(
+                r"\[\[CITE:([^\]]+)\]\]",
+                lambda m: m.group(0) if m.group(1).strip() in valid_cite else "",
+                answer,
+            )
+
         # --- Sources: prefer the docs that actually contributed notes; fall back to all rows.
         sources = _build_sources_from(source_items, meta, limit=20)
 
@@ -755,6 +848,7 @@ def _chat_impl(req: ChatRequest):
             "answer": answer,
             "sources": sources,
             "visuals": visuals_out,
+            "citations": citations_out,
             "followups": followups,
             "query_class": query_class,
             "thinking_mode": mode,

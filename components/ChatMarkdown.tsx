@@ -2,12 +2,15 @@
 
 import { Fragment, useMemo } from "react";
 
+export type Citation = { label: string; title: string; url: string | null };
+
 type Block =
-  | { type: "heading"; level: 1 | 2 | 3; text: string }
+  | { type: "heading"; level: 1 | 2 | 3 | 4; text: string }
   | { type: "paragraph"; text: string }
   | { type: "blockquote"; text: string }
   | { type: "code"; lang: string | null; code: string }
   | { type: "list"; ordered: boolean; items: string[] }
+  | { type: "table"; headers: string[]; rows: string[][] }
   | { type: "math"; latex: string };
 
 function escapeHtml(s: string) {
@@ -19,20 +22,26 @@ function escapeHtml(s: string) {
     .replaceAll("'", "&#39;");
 }
 
-function renderInline(text: string) {
-  // Minimal, dependency-free inline formatting:
-  // - inline code: `x`
-  // - bold: **x**
-  // - italic: *x*  (best-effort)
-  // - inline math: $x$
-  // - links: [label](url)
-  //
-  // We build HTML and render via dangerouslySetInnerHTML (content is from your own backend,
-  // but still treat it as untrusted: we escape everything first, then selectively unescape
-  // only our own tags).
+function renderInline(text: string, citations?: Record<string, Citation>) {
+  // Minimal, dependency-free inline formatting. Content comes from our own backend but is still
+  // treated as untrusted: everything is escaped first, then only our own tags are injected.
   let html = escapeHtml(text);
 
-  // Links
+  // Inline source-reference chips: [[CITE:n]] -> a small clickable pill.
+  html = html.replace(/\[\[CITE:([^\]]+)\]\]/g, (_m, raw) => {
+    const key = String(raw).trim();
+    const c = citations?.[key];
+    if (!c) return "";
+    const label = escapeHtml(c.label || key);
+    const title = escapeHtml(c.title || c.label || "");
+    if (c.url) {
+      const url = escapeHtml(c.url);
+      return `<a class="synapse-cite" href="${url}" target="_blank" rel="noreferrer noopener" title="${title}">📄 ${label}</a>`;
+    }
+    return `<span class="synapse-cite" title="${title}">📄 ${label}</span>`;
+  });
+
+  // Links [label](url)
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_m, label, url) => {
     const safeLabel = escapeHtml(String(label));
     const safeUrl = escapeHtml(String(url));
@@ -54,9 +63,21 @@ function renderInline(text: string) {
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
+function splitRow(line: string): string[] {
+  // Split a markdown table row on unescaped pipes, dropping the leading/trailing pipe.
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|")) s = s.slice(0, -1);
+  return s.split("|").map((c) => c.trim());
+}
+
+function isTableSeparator(line: string): boolean {
+  // e.g. | --- | :---: | ---: |
+  return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(line) || /^\s*\|(\s*:?-{2,}:?\s*\|)+\s*$/.test(line);
+}
+
 function parseBlocks(content: string): Block[] {
-  // Hide backend-internal citation formats from the UI (we still keep structured sources separately).
-  // Examples seen: "(chunk_id=..., doc_id=...)" or "[chunk_id=... doc_id=... pages=...]"
+  // Hide backend-internal citation formats from the UI (we keep structured sources separately).
   const cleaned = (content || "")
     .replace(/\(\s*chunk_id=[^)]*\)/gi, "")
     .replace(/\(\s*chunk_id=[^,]+,\s*doc_id=[^)]+\)/gi, "")
@@ -85,13 +106,12 @@ function parseBlocks(content: string): Block[] {
         buf.push(lines[i] ?? "");
         i += 1;
       }
-      // consume closing fence if present
       if (i < lines.length && /^```/.test(lines[i] ?? "")) i += 1;
       blocks.push({ type: "code", lang, code: buf.join("\n") });
       continue;
     }
 
-    // Display math blocks $$ ... $$ (single-line or multi-line)
+    // Display math blocks $$ ... $$
     if (/^\s*\$\$\s*$/.test(line)) {
       i += 1;
       const buf: string[] = [];
@@ -105,16 +125,29 @@ function parseBlocks(content: string): Block[] {
       continue;
     }
 
-    // Headings
-    const h = /^(#{1,3})\s+(.+)\s*$/.exec(line);
+    // Tables: a header row of pipes followed by a separator row.
+    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && isTableSeparator(lines[i + 1] ?? "")) {
+      const headers = splitRow(line);
+      i += 2; // header + separator
+      const rows: string[][] = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i] ?? "")) {
+        rows.push(splitRow(lines[i] ?? ""));
+        i += 1;
+      }
+      blocks.push({ type: "table", headers, rows });
+      continue;
+    }
+
+    // Headings (#..####)
+    const h = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
     if (h) {
-      const level = h[1].length as 1 | 2 | 3;
+      const level = Math.min(h[1].length, 4) as 1 | 2 | 3 | 4;
       blocks.push({ type: "heading", level, text: h[2] ?? "" });
       i += 1;
       continue;
     }
 
-    // Blockquote (single or multi-line contiguous)
+    // Blockquote (contiguous)
     if (/^\s*>\s?/.test(line)) {
       const buf: string[] = [];
       while (i < lines.length && /^\s*>\s?/.test(lines[i] ?? "")) {
@@ -148,7 +181,7 @@ function parseBlocks(content: string): Block[] {
       continue;
     }
 
-    // Paragraphs (aggregate until blank line)
+    // Paragraphs (aggregate until blank line / structural block)
     if (!line.trim()) {
       i += 1;
       continue;
@@ -156,9 +189,15 @@ function parseBlocks(content: string): Block[] {
 
     const buf: string[] = [];
     while (i < lines.length && (lines[i] ?? "").trim() !== "") {
-      // stop if next is a structural block
       const l = lines[i] ?? "";
-      if (/^```/.test(l) || /^\s*\$\$\s*$/.test(l) || /^(#{1,3})\s+/.test(l) || /^\s*>\s?/.test(l)) break;
+      if (
+        /^```/.test(l) ||
+        /^\s*\$\$\s*$/.test(l) ||
+        /^(#{1,6})\s+/.test(l) ||
+        /^\s*>\s?/.test(l) ||
+        (/^\s*\|.*\|\s*$/.test(l) && isTableSeparator(lines[i + 1] ?? ""))
+      )
+        break;
       buf.push(l);
       i += 1;
     }
@@ -168,28 +207,35 @@ function parseBlocks(content: string): Block[] {
   return blocks;
 }
 
-export default function ChatMarkdown({ content }: { content: string }) {
+export default function ChatMarkdown({
+  content,
+  citations,
+}: {
+  content: string;
+  citations?: Record<string, Citation>;
+}) {
   const blocks = useMemo(() => parseBlocks(content || ""), [content]);
 
   return (
     <div className="synapse-markdown">
       {blocks.map((b, idx) => {
         if (b.type === "heading") {
-          const Tag: "h1" | "h2" | "h3" = b.level === 1 ? "h1" : b.level === 2 ? "h2" : "h3";
+          const Tag = (`h${b.level}` as unknown) as "h1" | "h2" | "h3" | "h4";
           return (
             <Tag key={idx} className="synapse-md-heading">
-              {renderInline(b.text)}
+              {renderInline(b.text, citations)}
             </Tag>
           );
         }
 
         if (b.type === "blockquote") {
+          const parts = b.text.split("\n");
           return (
             <blockquote key={idx}>
-              {b.text.split("\n").map((ln, i) => (
+              {parts.map((ln, i) => (
                 <Fragment key={i}>
-                  {renderInline(ln)}
-                  {i < b.text.split("\n").length - 1 ? <br /> : null}
+                  {renderInline(ln, citations)}
+                  {i < parts.length - 1 ? <br /> : null}
                 </Fragment>
               ))}
             </blockquote>
@@ -211,6 +257,31 @@ export default function ChatMarkdown({ content }: { content: string }) {
           );
         }
 
+        if (b.type === "table") {
+          return (
+            <div key={idx} className="overflow-x-auto">
+              <table>
+                <thead>
+                  <tr>
+                    {b.headers.map((h, ci) => (
+                      <th key={ci}>{renderInline(h, citations)}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {b.rows.map((r, ri) => (
+                    <tr key={ri}>
+                      {b.headers.map((_h, ci) => (
+                        <td key={ci}>{renderInline(r[ci] ?? "", citations)}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+
         if (b.type === "math") {
           return (
             <div key={idx} className="katex-display">
@@ -226,19 +297,20 @@ export default function ChatMarkdown({ content }: { content: string }) {
           return (
             <ListTag key={idx}>
               {b.items.map((it, i) => (
-                <li key={i}>{renderInline(it)}</li>
+                <li key={i}>{renderInline(it, citations)}</li>
               ))}
             </ListTag>
           );
         }
 
         // paragraph
+        const parts = b.text.split("\n");
         return (
           <p key={idx}>
-            {b.text.split("\n").map((ln, i) => (
+            {parts.map((ln, i) => (
               <Fragment key={i}>
-                {renderInline(ln)}
-                {i < b.text.split("\n").length - 1 ? <br /> : null}
+                {renderInline(ln, citations)}
+                {i < parts.length - 1 ? <br /> : null}
               </Fragment>
             ))}
           </p>

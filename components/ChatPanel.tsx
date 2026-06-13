@@ -27,7 +27,7 @@ const THINKING_MODE_META: Record<ThinkingMode, { label: string; desc: string }> 
   low: { label: "Fast", desc: "Single pass · quickest" },
 };
 import ChatMessageSources from "@/components/ChatMessageSources";
-import ChatAnswer, { type ChatVisual } from "@/components/ChatAnswer";
+import ChatAnswer, { type ChatVisual, type ChatCitation } from "@/components/ChatAnswer";
 import ContextMeter from "@/components/ContextMeter";
 
 type LibraryLite = {
@@ -59,6 +59,7 @@ type ChatResponse = {
   answer: string;
   sources?: ChatSource[];
   visuals?: ChatVisual[];
+  citations?: ChatCitation[];
   followups?: Array<{ hop: number; query: string }>;
   client_request_id?: string | null;
   client_prompt_hash?: string | null;
@@ -112,6 +113,7 @@ type ChatMessage = {
   status?: "draft" | "streaming" | "typing" | "done" | "stopped" | "error";
   sources?: ChatSource[];
   visuals?: ChatVisual[];
+  citations?: ChatCitation[];
   followups?: Array<{ hop: number; query: string }>;
   stage?: string; // live "what the agent is doing" message while generating
 };
@@ -960,6 +962,9 @@ export default function ChatPanel({
       const visuals: ChatVisual[] = Array.isArray((payload as ChatResponse)?.visuals)
         ? ((payload as ChatResponse).visuals as ChatVisual[])
         : [];
+      const citations: ChatCitation[] = Array.isArray((payload as ChatResponse)?.citations)
+        ? ((payload as ChatResponse).citations as ChatCitation[])
+        : [];
       const followups: Array<{ hop: number; query: string }> = Array.isArray((payload as ChatResponse)?.followups)
         ? ((payload as ChatResponse).followups as Array<{ hop: number; query: string }>)
         : [];
@@ -1008,7 +1013,7 @@ export default function ChatPanel({
       }
 
       onSources?.(sources);
-      patchMessage(tid, draftId, { status: "done", content: answer, sources, visuals, followups });
+      patchMessage(tid, draftId, { status: "done", content: answer, sources, visuals, citations, followups });
       onLog?.({
         level: "success",
         message: "Chat: response received",
@@ -1246,9 +1251,6 @@ export default function ChatPanel({
           </button>
 
           <div className="flex items-center gap-2 min-w-0">
-            <span className="grid place-items-center h-7 w-7 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 shrink-0">
-              <FiMessageSquare className="h-3.5 w-3.5 text-white" />
-            </span>
             <span className="text-sm font-medium text-white/85 truncate">
               {threads.find((t) => t.id === activeThreadId)?.title ?? "New conversation"}
             </span>
@@ -1291,10 +1293,7 @@ export default function ChatPanel({
                   );
                 }
                 return (
-                  <div key={m.id} className="flex gap-3">
-                    <span className="mt-0.5 grid place-items-center h-8 w-8 shrink-0 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow-md shadow-violet-500/25">
-                      <FiMessageSquare className="h-4 w-4 text-white" />
-                    </span>
+                  <div key={m.id}>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-semibold text-white/80">Synapse</span>
@@ -1309,7 +1308,7 @@ export default function ChatPanel({
                         </div>
                       ) : (
                         <div className="rounded-2xl rounded-tl-md glass px-4 py-3">
-                          <ChatAnswer content={m.content} visuals={m.visuals} />
+                          <ChatAnswer content={m.content} visuals={m.visuals} citations={m.citations} />
                           {m.status === "typing" ? (
                             <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-[2px] rounded-full bg-violet-300 animate-pulse" />
                           ) : null}
