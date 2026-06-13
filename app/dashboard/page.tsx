@@ -12,6 +12,7 @@ import LogPanel from "@/components/LogPanel";
 import { LogProvider, useLog } from "@/context/LogContext";
 import LibraryDrawer from "@/components/LibraryDrawer";
 import ChatWorkspace from "@/components/ChatWorkspace";
+import TeamWorkspace from "@/components/TeamWorkspace";
 
 type Library = {
     id: string;
@@ -1092,6 +1093,14 @@ function DashboardPageInner() {
                                     message: e.message,
                                     details: e.details,
                                 })
+                            }
+                        />
+                    ) : activeTab === "team" ? (
+                        <TeamWorkspace
+                            supabase={supabase}
+                            organization={currentOrg ? { id: currentOrg.id, name: currentOrg.name } : null}
+                            onLog={(e) =>
+                                addLog({ level: e.level, source: "team", message: e.message, details: e.details })
                             }
                         />
                     ) : (

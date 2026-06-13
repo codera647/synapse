@@ -23,7 +23,7 @@ export default function DashboardSidebar({
 
     const activeKey = useMemo(() => {
         const tab = (searchParams.get("tab") || "libraries").toLowerCase();
-        return tab === "chat" ? "chat" : "libraries";
+        return tab === "chat" || tab === "team" || tab === "usage" ? tab : "libraries";
     }, [searchParams]);
 
     return (
