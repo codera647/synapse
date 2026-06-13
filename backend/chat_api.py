@@ -18,7 +18,7 @@ from chat_runtime import (
     hydrate_doc_titles,
     retrieve_chunks,
 )
-from chat_agents import extract_notes, merge_notes, plan_query
+from chat_agents import critique_answer, extract_notes, merge_notes, plan_query
 
 load_env()
 
@@ -31,10 +31,21 @@ class ChatRequest(BaseModel):
     message: str
     max_hops: int = 4
     top_k: int = 12
+    # Reasoning depth: "low" (fast single-pass), "medium" (balanced), "high" (max accuracy).
+    thinking_mode: Optional[str] = None
     thread_summary: Optional[str] = None
     history: Optional[List[Dict[str, str]]] = None
     client_request_id: Optional[str] = None
     client_prompt_hash: Optional[str] = None
+
+
+# Reasoning depth presets:
+#   (critic rounds, sub-query count, breadth top-k multiplier, answer max_tokens, detail level)
+THINKING_MODES = {
+    "low": (0, 0, 1.0, 900, "concise"),
+    "medium": (1, 2, 1.25, 1500, "balanced"),
+    "high": (2, 4, 1.5, 2600, "comprehensive"),
+}
 
 class CompactRequest(BaseModel):
     organization_id: str
@@ -155,11 +166,27 @@ def _followup_decision_prompt(user_query: str, convo: str, evidence: str) -> Lis
     return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
 
 
+_DETAIL_RULES = {
+    "concise": "Be concise and direct — answer in as few words as cover the question well.\n",
+    "balanced": (
+        "Be thorough but focused: cover every part of the question with the relevant facts, and "
+        "use short bullet points or structure where it helps. Do not omit relevant detail.\n"
+    ),
+    "comprehensive": (
+        "Be comprehensive: address EVERY part of the question with supporting detail, include the "
+        "key entities/numbers/comparisons, and organize the answer with clear structure (headings "
+        "and bullet points for multi-part answers). Prefer completeness over brevity, but never pad "
+        "with filler.\n"
+    ),
+}
+
+
 def _final_answer_prompt(
     user_query: str,
     convo: str,
     evidence: str,
     visuals: Optional[List[Dict[str, Any]]] = None,
+    detail: str = "balanced",
 ) -> List[Dict[str, str]]:
     visual_rule = ""
     if visuals:
@@ -185,8 +212,8 @@ def _final_answer_prompt(
         + "Do NOT mention whether you did or did not find information in the user's PDFs.\n"
         "Do NOT add inline citations like '(Source: ...)'. Sources are shown separately in the UI.\n"
         "Do NOT include chunk_id, doc_id, library_id, embedding ids, or any internal identifiers in the answer.\n"
-        "Be concise.\n"
-        "At the very end, output a single line exactly: SOURCES_USED: yes|no (yes only if you actually used the EVIDENCE).\n"
+        + _DETAIL_RULES.get(detail, _DETAIL_RULES["balanced"])
+        + "At the very end, output a single line exactly: SOURCES_USED: yes|no (yes only if you actually used the EVIDENCE).\n"
     )
     user = _compose_user_prompt(user_query, convo, evidence)
     if visuals:
@@ -464,10 +491,23 @@ def _chat_impl(req: ChatRequest):
 
     followups: List[Dict[str, Any]] = []
 
-    # --- Planner: chain-of-thought classify + query rewrite + retrieval gate.
+    # --- Planner: chain-of-thought classify + query rewrite + decompose + retrieval gate.
     plan = plan_query(client, req.message, convo)
     query_class = plan.get("query_class") or "SPOTLIGHT"
     search_query = plan.get("search_query") or req.message
+    # Reasoning depth (user-selectable): low / medium / high.
+    mode = (req.thinking_mode or os.getenv("CHAT_DEFAULT_THINKING_MODE", "medium")).strip().lower()
+    if mode not in THINKING_MODES:
+        mode = "medium"
+    mode_rounds, mode_subqs, breadth_mult, mode_answer_tokens, mode_detail = THINKING_MODES[mode]
+    # Env can cap the deepest setting (e.g. to avoid the proxy timeout on slow models).
+    max_critic_rounds = min(mode_rounds, max(0, int(os.getenv("CHAT_MAX_CRITIC_ROUNDS", "2"))))
+    sub_queries = (plan.get("sub_queries") or [])[:mode_subqs]
+    # Output length scales with the mode (env CHAT_ANSWER_MAX_TOKENS overrides if set).
+    answer_max_tokens = int(os.getenv("CHAT_ANSWER_MAX_TOKENS") or mode_answer_tokens)
+    # "Complex" queries get the deep treatment (multi-query recall + completeness critic loop);
+    # spotlight/simple queries use the fast single-pass path. (Adaptive routing — Loong.)
+    complex_query = query_class in {"MULTI_HOP", "COMPARISON", "AGGREGATION", "MULTI_ENTITY"}
 
     def _ungrounded_payload() -> Dict[str, Any]:
         ans = client.chat.completions.create(
@@ -517,9 +557,58 @@ def _chat_impl(req: ChatRequest):
             chat_job_id = None
 
     try:
-        # --- Retriever (hop 0): use the rewritten search query.
-        qvec = embed_query(search_query)
-        rows = _retrieve_rows(org, libs, search_query, qvec, top_k, 0, worker_ctx)
+        # --- Retrieval state + helper. Multi-query recall up front, then (for complex queries) a
+        # draft -> completeness-critic -> gap-fill -> revise loop. Simple queries stay single-pass.
+        rows: List[Dict[str, Any]] = []
+        notes: List[Dict[str, Any]] = []
+        meta: Dict[str, Dict[str, Any]] = {}
+        seen_chunks: set = set()
+        hop_counter = 0
+
+        # Breadth for comparison/aggregation/multi-entity: cast a wider net per query (Loong).
+        # The multiplier scales with the thinking mode.
+        eff_top_k = top_k
+        if query_class in {"COMPARISON", "AGGREGATION", "MULTI_ENTITY"} and breadth_mult > 1.0:
+            eff_top_k = min(_max_topk_cap(), max(top_k, int(top_k * breadth_mult)))
+
+        def _retrieve_only(query_text: str, k: int) -> List[Dict[str, Any]]:
+            """Retrieve for one (sub-)query, merge new chunks into rows, return only the fresh ones."""
+            nonlocal hop_counter
+            hop_counter += 1
+            qv = embed_query(query_text)
+            fetched = _retrieve_rows(org, libs, query_text, qv, k, hop_counter, worker_ctx)
+            fresh: List[Dict[str, Any]] = []
+            for r in fetched:
+                cid = str(r.get("chunk_id") or "")
+                if cid and cid in seen_chunks:
+                    continue
+                rows.append(r)
+                fresh.append(r)
+                if cid:
+                    seen_chunks.add(cid)
+            return fresh
+
+        def _ingest_notes(query_text: str, fresh: List[Dict[str, Any]]) -> None:
+            """Hydrate titles, then distill a batch of fresh rows into notes in ONE Extractor call."""
+            nonlocal meta
+            if not fresh:
+                return
+            meta = _hydrate_titles(rows)
+            if extractor_on:
+                notes.extend(extract_notes(client, query_text, fresh, sub_query=query_text))
+
+        # --- Initial retrieval: rewritten query + (for complex queries) the planned sub-queries.
+        # Retrieve for all, union, then extract once (keeps call-count bounded for deep queries).
+        initial_queries = [search_query]
+        if complex_query:
+            for sq in sub_queries:
+                if sq and sq.lower() not in {q.lower() for q in initial_queries}:
+                    initial_queries.append(sq)
+        initial_fresh: List[Dict[str, Any]] = []
+        for q in initial_queries[:5]:
+            initial_fresh.extend(_retrieve_only(q, eff_top_k))
+        _ingest_notes(search_query, initial_fresh)
+
         if not rows:
             payload = _ungrounded_payload()
             if mark_chat_job_done and chat_job_id:
@@ -529,54 +618,42 @@ def _chat_impl(req: ChatRequest):
                     pass
             return payload
 
-        meta = _hydrate_titles(rows)
-
-        # --- Extractor: distill hop-0 evidence into source-anchored notes.
-        notes: List[Dict[str, Any]] = (
-            extract_notes(client, search_query, rows, sub_query=search_query) if extractor_on else []
-        )
+        if not meta:
+            meta = _hydrate_titles(rows)
         context_doc = build_context_document(notes) or build_evidence_brief(rows)
 
-        # --- CuriousLLM hop loop: GPT decides a follow-up; retrieve + extract; repeat.
-        for hop in range(max_hops):
-            dec = client.chat.completions.create(
+        def _synthesize(visuals: Optional[List[Dict[str, Any]]] = None) -> str:
+            out = client.chat.completions.create(
                 model=model,
-                messages=_followup_decision_prompt(req.message, convo, context_doc),
+                messages=_final_answer_prompt(
+                    req.message, convo, context_doc, visuals=visuals or None, detail=mode_detail
+                ),
                 temperature=0.2,
-                max_tokens=350,
+                max_tokens=answer_max_tokens,
             )
-            j = _json_extract((dec.choices[0].message.content or "").strip())
-            next_action = str(j.get("next_action") or "").upper()
-            if next_action != "FOLLOWUP":
-                # NA / unexpected -> early termination (CuriousLLM).
-                break
-            fq = str(j.get("followup_query") or "").strip()
-            if not fq:
-                break
-            followups.append({"hop": hop + 1, "query": fq})
+            return (out.choices[0].message.content or "").strip()
 
-            fq_vec = embed_query(fq)
-            more = _retrieve_rows(org, libs, fq, fq_vec, max(3, top_k // 2), hop + 1, worker_ctx)
+        # --- Draft answer (text-only).
+        draft = _synthesize()
 
-            # Merge new chunks (dedupe by chunk_id).
-            seen = {str(r.get("chunk_id")) for r in rows if r.get("chunk_id")}
-            fresh: List[Dict[str, Any]] = []
-            for r in more:
-                cid = str(r.get("chunk_id") or "")
-                if cid and cid in seen:
-                    continue
-                rows.append(r)
-                fresh.append(r)
-                if cid:
-                    seen.add(cid)
-
-            if fresh:
-                meta = _hydrate_titles(rows)
-                if extractor_on:
-                    notes = merge_notes(notes, extract_notes(client, fq, fresh, sub_query=fq))
+        # --- Completeness-critic loop (complex queries only): find gaps -> retrieve -> revise.
+        if complex_query and max_critic_rounds > 0:
+            for _crit_round in range(max_critic_rounds):
+                verdict = critique_answer(client, req.message, draft, context_doc)
+                if verdict.get("complete") or not verdict.get("missing"):
+                    break
+                round_fresh: List[Dict[str, Any]] = []
+                for mq in verdict["missing"][:4]:
+                    followups.append({"hop": len(followups) + 1, "query": mq})
+                    round_fresh.extend(_retrieve_only(mq, max(4, eff_top_k // 2)))
+                if not round_fresh:
+                    break  # nothing new surfaced — stop rather than spin
+                _ingest_notes(req.message, round_fresh)
                 context_doc = build_context_document(notes) or build_evidence_brief(rows)
+                draft = _synthesize()  # revise with the augmented evidence
 
-        # --- Gather figures/tables attached to the evidence chunks, to offer the synthesizer.
+        # --- Gather figures/tables for the converged evidence, then do the FINAL synthesis with
+        # inline visuals (one extra call only when there are visuals to place).
         source_items = notes if notes else rows
         available_visuals: List[Dict[str, Any]] = []
         if str(os.getenv("CHAT_ENABLE_VISUALS", "1")).strip() not in {"0", "false", "False"}:
@@ -586,14 +663,7 @@ def _chat_impl(req: ChatRequest):
             except Exception:
                 available_visuals = []
 
-        # --- Synthesizer: final grounded answer from the context document (+ inline visuals).
-        ans = client.chat.completions.create(
-            model=model,
-            messages=_final_answer_prompt(req.message, convo, context_doc, visuals=available_visuals or None),
-            temperature=0.2,
-            max_tokens=max_tokens,
-        )
-        answer = (ans.choices[0].message.content or "").strip()
+        answer = _synthesize(visuals=available_visuals) if available_visuals else draft
         # UI renders sources separately; strip any inline "(Source: ...)" the model might emit.
         answer = re.sub(r"\(\s*Source\s*:[^)]+\)", "", answer, flags=re.IGNORECASE).strip()
         answer, sources_used = _strip_and_detect_sources_used(answer)
@@ -642,6 +712,7 @@ def _chat_impl(req: ChatRequest):
             "visuals": visuals_out,
             "followups": followups,
             "query_class": query_class,
+            "thinking_mode": mode,
             "client_request_id": req.client_request_id,
             "client_prompt_hash": req.client_prompt_hash,
             "server_prompt_hash": server_prompt_hash,

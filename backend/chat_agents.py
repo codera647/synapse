@@ -77,6 +77,7 @@ _PLANNER_SYSTEM = (
     "[\"SPOTLIGHT\",\"MULTI_HOP\",\"COMPARISON\",\"AGGREGATION\",\"MULTI_ENTITY\",\"CONVERSATIONAL\"],\n"
     '  "needs_retrieval": boolean,\n'
     '  "search_query": string,\n'
+    '  "sub_queries": [string],\n'
     '  "reason": string\n'
     "}\n\n"
     "Guidance:\n"
@@ -88,6 +89,10 @@ _PLANNER_SYSTEM = (
     "- search_query: rewrite the user's message into a single self-contained retrieval query. "
     "Resolve pronouns and references using the conversation, expand acronyms if obvious, and keep "
     "the important entities/keywords. Do NOT answer the question here.\n"
+    "- sub_queries: for SPOTLIGHT or CONVERSATIONAL, return []. For MULTI_HOP / COMPARISON / "
+    "AGGREGATION / MULTI_ENTITY, decompose the question into 2-4 SPECIFIC, self-contained retrieval "
+    "sub-queries that together fully cover it (e.g. one per entity to compare, or one per reasoning "
+    "step). Each must be searchable on its own.\n"
     "- reason: one short sentence."
 )
 
@@ -103,6 +108,7 @@ def plan_query(client, message: str, convo: str = "", model: Optional[str] = Non
         "query_class": "SPOTLIGHT",
         "needs_retrieval": True,
         "search_query": (message or "").strip(),
+        "sub_queries": [],
         "reason": "default",
     }
     msg = (message or "").strip()
@@ -133,10 +139,18 @@ def plan_query(client, message: str, convo: str = "", model: Optional[str] = Non
         needs = qc != "CONVERSATIONAL"
     # Safety: conversational must skip retrieval; everything else must use it.
     needs = False if qc == "CONVERSATIONAL" else True
+    raw_subs = j.get("sub_queries")
+    subs: List[str] = []
+    if isinstance(raw_subs, list):
+        for s in raw_subs:
+            s = str(s).strip()
+            if s and s.lower() != sq.lower() and s not in subs:
+                subs.append(s)
     return {
         "query_class": qc,
         "needs_retrieval": needs,
         "search_query": sq,
+        "sub_queries": subs[:4],
         "reason": str(j.get("reason") or "").strip(),
     }
 
@@ -263,3 +277,74 @@ def merge_notes(existing: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> Li
         seen.add(key)
         out.append(n)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Completeness critic agent (self-reflective gap-finding)
+# ---------------------------------------------------------------------------
+
+_CRITIC_SYSTEM = (
+    "You are the Completeness Critic in Synapse. You are given the USER_QUERY, a DRAFT_ANSWER, and "
+    "the EVIDENCE the draft was built from. Judge whether the draft FULLY answers the query, and find "
+    "what is still missing — the failure mode is omitting required entities, numbers, comparisons, or "
+    "reasoning steps.\n\n"
+    "Return ONLY this JSON object:\n"
+    '{ "complete": boolean, "missing": [string], "reason": string }\n\n'
+    "Rules:\n"
+    "- complete=true ONLY if every part of the query is addressed and no required entity/number/"
+    "comparison/step is missing or unsupported.\n"
+    "- missing: 1-4 SPECIFIC, self-contained retrieval sub-queries that would fill the gaps (what to "
+    "search for next). Return [] if complete.\n"
+    "- Judge strictly against what the query asks — do NOT request tangential detail the user didn't ask "
+    "for. Better to be complete than exhaustive.\n"
+    "- reason: one short sentence."
+)
+
+
+def critique_answer(
+    client,
+    query: str,
+    draft: str,
+    evidence: str,
+    *,
+    model: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Completeness critic. Examines the draft answer against the query + evidence and returns whether
+    it is complete and, if not, specific retrieval sub-queries to fill the gaps. Never raises:
+    returns {complete: True, missing: []} on any failure (so the loop ends safely).
+    """
+    mdl = model or _model_for("CHAT_CRITIC_MODEL")
+    user = (
+        f"USER_QUERY:\n{query}\n\nDRAFT_ANSWER:\n{draft}\n\nEVIDENCE:\n{evidence}\n"
+    )
+    try:
+        out = client.chat.completions.create(
+            model=mdl,
+            messages=[
+                {"role": "system", "content": _CRITIC_SYSTEM},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.1,
+            max_tokens=400,
+        )
+        j = _json_object(out.choices[0].message.content or "")
+    except Exception:
+        return {"complete": True, "missing": [], "reason": "critic-failed"}
+
+    complete = bool(j.get("complete"))
+    missing: List[str] = []
+    raw = j.get("missing")
+    if isinstance(raw, list):
+        for m in raw:
+            m = str(m).strip()
+            if m and m not in missing:
+                missing.append(m)
+    missing = missing[:4]
+    if complete:
+        missing = []
+    return {
+        "complete": complete or not missing,
+        "missing": missing,
+        "reason": str(j.get("reason") or "").strip(),
+    }

@@ -17,7 +17,15 @@ import {
   FiX,
   FiArrowUp,
   FiCheck,
+  FiZap,
 } from "react-icons/fi";
+
+type ThinkingMode = "low" | "medium" | "high";
+const THINKING_MODE_META: Record<ThinkingMode, { label: string; desc: string }> = {
+  high: { label: "Deep", desc: "Decompose + 2 self-checks · most accurate, slower" },
+  medium: { label: "Balanced", desc: "Decompose + 1 self-check · good default" },
+  low: { label: "Fast", desc: "Single pass · quickest" },
+};
 import ChatMessageSources from "@/components/ChatMessageSources";
 import ChatAnswer, { type ChatVisual } from "@/components/ChatAnswer";
 import ContextMeter from "@/components/ContextMeter";
@@ -176,6 +184,8 @@ export default function ChatPanel({
   // True while context-window auto-compaction is summarizing a full chat and spawning the
   // linked continuation thread — drives the "starting a linked chat…" loading banner.
   const [compacting, setCompacting] = useState(false);
+  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("medium");
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [threadQuery, setThreadQuery] = useState("");
   const [historyOpen, setHistoryOpen] = useState(true);
@@ -202,6 +212,26 @@ export default function ChatPanel({
   const displayMessages = useMemo(() => {
     return activeMessages.filter((m) => m.role !== "system");
   }, [activeMessages]);
+
+  // Remember the chosen reasoning depth across sessions.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("synapse_thinking_mode");
+      if (saved === "low" || saved === "medium" || saved === "high") setThinkingMode(saved);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const changeThinkingMode = (m: ThinkingMode) => {
+    setThinkingMode(m);
+    setModeMenuOpen(false);
+    try {
+      localStorage.setItem("synapse_thinking_mode", m);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const filteredThreads = useMemo(() => {
     const q = threadQuery.trim().toLowerCase();
@@ -812,6 +842,7 @@ export default function ChatPanel({
             organization_id: organization?.id ?? null,
             library_ids: selectedLibraryIds,
             message: userText,
+            thinking_mode: thinkingMode,
             client_request_id: clientRequestId,
             client_prompt_hash: clientPromptHash,
             // Context window inputs (summary + last few turns).
@@ -1387,6 +1418,52 @@ export default function ChatPanel({
               >
                 <FiPlus className="h-5 w-5" />
               </button>
+
+              {/* Thinking-depth selector */}
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setModeMenuOpen((v) => !v)}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-2.5 text-[11px] font-medium text-white/70 hover:text-white hover:border-violet-400/30 transition-colors"
+                  title={`Thinking depth: ${THINKING_MODE_META[thinkingMode].label}`}
+                >
+                  <FiZap className={`h-3.5 w-3.5 ${thinkingMode === "high" ? "text-fuchsia-300" : thinkingMode === "medium" ? "text-violet-300" : "text-white/45"}`} />
+                  <span className="hidden sm:inline">{THINKING_MODE_META[thinkingMode].label}</span>
+                </button>
+                {modeMenuOpen && (
+                  <>
+                    <button
+                      type="button"
+                      aria-hidden
+                      onClick={() => setModeMenuOpen(false)}
+                      className="fixed inset-0 z-20 cursor-default"
+                      tabIndex={-1}
+                    />
+                    <div className="surface-menu absolute bottom-full left-0 z-30 mb-2 w-60 rounded-xl p-1.5 shadow-2xl shadow-black/50">
+                      <div className="px-2 py-1 text-[9px] uppercase tracking-wide text-white/35">Thinking depth</div>
+                      {(["high", "medium", "low"] as ThinkingMode[]).map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => changeThinkingMode(m)}
+                          className={`flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
+                            thinkingMode === m ? "bg-violet-500/20" : "hover:bg-white/6"
+                          }`}
+                        >
+                          <FiZap className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${m === "high" ? "text-fuchsia-300" : m === "medium" ? "text-violet-300" : "text-white/45"}`} />
+                          <span className="min-w-0">
+                            <span className="flex items-center gap-1.5 text-xs font-medium text-white/90">
+                              {THINKING_MODE_META[m].label}
+                              {thinkingMode === m ? <FiCheck className="h-3 w-3 text-violet-300" /> : null}
+                            </span>
+                            <span className="block text-[10px] leading-snug text-white/45">{THINKING_MODE_META[m].desc}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
 
               <textarea
                 value={prompt}
