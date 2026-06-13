@@ -993,7 +993,13 @@ export default function ChatPanel({
       if (typewriterOn && answer.trim().length > 0) {
         const tokens = answer.split(/(\s+)/); // keep whitespace tokens so spacing is preserved
         const wordCount = tokens.filter((t) => t.trim().length > 0).length;
-        const chunk = Math.max(1, Math.ceil(wordCount / 70)); // ~70 frames ≈ 1.2s
+        // Smooth, relaxed pace: reveal ~1 word per frame for short/medium answers (so it reads as
+        // a steady stream, not jumps), scaling up only for very long answers so they still finish
+        // in a few seconds. frameMs and the cap are tunable via env.
+        const frameMs = Number(process.env.NEXT_PUBLIC_CHAT_TYPEWRITER_MS || 26);
+        const maxDurationMs = Number(process.env.NEXT_PUBLIC_CHAT_TYPEWRITER_MAX_MS || 4000);
+        const maxFrames = Math.max(1, Math.floor(maxDurationMs / frameMs));
+        const chunk = Math.max(1, Math.ceil(wordCount / maxFrames));
         let shown = "";
         let wordsThisFrame = 0;
         for (let i = 0; i < tokens.length; i++) {
@@ -1003,7 +1009,7 @@ export default function ChatPanel({
           if (wordsThisFrame >= chunk || i === tokens.length - 1) {
             patchMessage(tid, draftId, { status: "typing", content: shown });
             wordsThisFrame = 0;
-            await new Promise((r) => setTimeout(r, 16));
+            await new Promise((r) => setTimeout(r, frameMs));
           }
         }
       }
