@@ -275,10 +275,15 @@ function DashboardPageInner() {
         setCreateLibraryLoading(true);
         setCreateLibraryError(null);
 
+        // Record the owner so libraries can be (explicitly) shared into teams later.
+        const { data: ownerRes } = await supabase.auth.getUser();
+        const ownerUserId = ownerRes?.user?.id ?? null;
+
         const { data, error } = await supabase
             .from("libraries")
             .insert({
                 organization_id: currentOrg.id,
+                created_by_user_id: ownerUserId,
                 name: newLibraryName.trim(),
                 source_type: "google_drive",
                 source_folder_id: newLibrarySourceFolder.trim(),

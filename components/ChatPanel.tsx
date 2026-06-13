@@ -331,10 +331,17 @@ export default function ChatPanel({
 
   const loadThreads = async () => {
     if (!organization?.id) return;
+    // Personal chat is PRIVATE: only the current user's own, non-team threads. (Team-mode threads
+    // are shared and loaded separately — Phase 2.)
+    const { data: userRes } = await supabase.auth.getUser();
+    const uid = userRes?.user?.id;
+    if (!uid) return;
     const { data, error } = await supabase
       .from("chat_threads")
       .select("id, title, updated_at, selected_library_ids, parent_thread_id, root_thread_id")
       .eq("organization_id", organization.id)
+      .eq("created_by_user_id", uid)
+      .eq("is_team", false)
       .order("updated_at", { ascending: false })
       .limit(80);
 
