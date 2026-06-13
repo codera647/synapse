@@ -20,6 +20,7 @@ import {
 } from "react-icons/fi";
 import ChatMarkdown from "@/components/ChatMarkdown";
 import ChatMessageSources from "@/components/ChatMessageSources";
+import ContextMeter from "@/components/ContextMeter";
 
 type LibraryLite = {
   id: string;
@@ -380,6 +381,26 @@ export default function ChatPanel({
     }
     return null;
   };
+
+  // Live context-window usage — mirrors the exact budget math used in send() so the ring
+  // predicts when the thread will auto-summarize. Includes the in-progress prompt draft.
+  const contextBudgetTokens = Number(process.env.NEXT_PUBLIC_CHAT_CONTEXT_BUDGET_TOKENS || 9000);
+  const contextUsedTokens = (() => {
+    const tid = activeThreadId;
+    const summary = tid ? getThreadSummary(tid) || "" : "";
+    const recentTurns = tid
+      ? (messagesByThread[tid] ?? [])
+          .filter((m) => m.role !== "system")
+          .slice(-18)
+          .map((m) => `${m.role}: ${m.content}`)
+          .join("\n")
+      : "";
+    return (
+      approxTokensFromText(summary) +
+      approxTokensFromText(recentTurns) +
+      approxTokensFromText(prompt)
+    );
+  })();
 
   const compactThread = async (threadId: string) => {
     if (!organization?.id) return null;
@@ -1248,6 +1269,10 @@ export default function ChatPanel({
                 className="synapse-scroll min-h-[2.25rem] max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm text-white placeholder:text-white/40 outline-none"
                 disabled={readyLibraries.length === 0}
               />
+
+              {readyLibraries.length > 0 && (
+                <ContextMeter used={contextUsedTokens} budget={contextBudgetTokens} />
+              )}
 
               <button
                 type="button"
