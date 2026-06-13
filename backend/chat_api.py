@@ -116,9 +116,28 @@ def _json_extract(content: str) -> Dict[str, Any]:
     return {}
 
 
-def _followup_decision_prompt(user_query: str, evidence: str) -> List[Dict[str, str]]:
+def _compose_user_prompt(user_query: str, convo: str, evidence: str) -> str:
+    """
+    Build the user message with PRIOR_CONVERSATION, USER_QUERY and EVIDENCE as DISTINCT blocks.
+
+    Critical: the conversation must NOT be merged into the EVIDENCE block. If a prior assistant
+    answer sits under "EVIDENCE:", the model copies it verbatim and every turn regurgitates the
+    previous turn's answer (an off-by-one bug). Keeping it in its own clearly-labelled, reference-
+    only block fixes that.
+    """
+    blocks: List[str] = []
+    if convo:
+        blocks.append(f"PRIOR_CONVERSATION (reference only — for resolving pronouns/follow-ups):\n{convo}")
+    blocks.append(f"USER_QUERY:\n{user_query}")
+    blocks.append(f"EVIDENCE:\n{evidence}")
+    return "\n\n".join(blocks) + "\n"
+
+
+def _followup_decision_prompt(user_query: str, convo: str, evidence: str) -> List[Dict[str, str]]:
     sys = (
-        "You are Synapse, a retrieval orchestrator. Decide if the provided evidence is sufficient to answer.\n"
+        "You are Synapse, a retrieval orchestrator. Decide if the provided EVIDENCE is sufficient to "
+        "answer the USER_QUERY.\n"
+        "PRIOR_CONVERSATION is only context to interpret the USER_QUERY; do not treat it as evidence.\n"
         "Return STRICT JSON only.\n"
         "If sufficient, set next_action='NA'.\n"
         "If insufficient, set next_action='FOLLOWUP' and provide a single followup_query.\n"
@@ -131,14 +150,17 @@ def _followup_decision_prompt(user_query: str, evidence: str) -> List[Dict[str, 
         "  \"sub_queries\": [{\"query\": string, \"priority\": 1|2|3}]\n"
         "}\n"
     )
-    user = f"USER_QUERY:\n{user_query}\n\nEVIDENCE:\n{evidence}\n"
+    user = _compose_user_prompt(user_query, convo, evidence)
     return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
 
 
-def _final_answer_prompt(user_query: str, evidence: str) -> List[Dict[str, str]]:
+def _final_answer_prompt(user_query: str, convo: str, evidence: str) -> List[Dict[str, str]]:
     sys = (
         "You are Synapse.\n"
-        "Prefer answering using the EVIDENCE provided.\n"
+        "Answer the USER_QUERY using the EVIDENCE (facts retrieved from the user's PDFs).\n"
+        "PRIOR_CONVERSATION is provided ONLY to resolve references (pronouns, 'it', follow-ups). "
+        "Do NOT repeat, copy, or restate any earlier answer — write a NEW answer that directly "
+        "addresses the current USER_QUERY.\n"
         "If the evidence is insufficient, answer using your general knowledge.\n"
         "Write a helpful answer, not just a single-line definition.\n"
         "If the user asks for a definition/acronym expansion, include 2-4 extra sentences of nearby context or practical meaning when possible.\n"
@@ -149,7 +171,7 @@ def _final_answer_prompt(user_query: str, evidence: str) -> List[Dict[str, str]]
         "Be concise.\n"
         "At the very end, output a single line exactly: SOURCES_USED: yes|no (yes only if you actually used the EVIDENCE).\n"
     )
-    user = f"USER_QUERY:\n{user_query}\n\nEVIDENCE:\n{evidence}\n"
+    user = _compose_user_prompt(user_query, convo, evidence)
     return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
 
 
@@ -170,13 +192,17 @@ def _conversation_prefix(summary: Optional[str], history: Optional[List[Dict[str
     if summary:
         parts.append(f"THREAD_SUMMARY:\n{summary.strip()}")
     if history:
-        # only keep last few turns to avoid growing prompts
+        # Keep only the last few turns, and TRUNCATE prior assistant answers so a full previous
+        # answer can't be copied wholesale into the next turn (root cause of the off-by-one
+        # "answer repeats" bug). User turns are short questions, so keep them intact.
         lines = []
-        for m in history[-16:]:
+        for m in history[-8:]:
             role = str(m.get("role") or "user")
-            content = str(m.get("content") or "")
+            content = str(m.get("content") or "").strip()
             if not content:
                 continue
+            if role == "assistant" and len(content) > 400:
+                content = content[:400].rstrip() + " …"
             lines.append(f"{role}: {content}")
         if lines:
             parts.append("RECENT_TURNS:\n" + "\n".join(lines))
@@ -476,9 +502,7 @@ def _chat_impl(req: ChatRequest):
         for hop in range(max_hops):
             dec = client.chat.completions.create(
                 model=model,
-                messages=_followup_decision_prompt(
-                    req.message, (convo + "\n\n" + context_doc).strip() if convo else context_doc
-                ),
+                messages=_followup_decision_prompt(req.message, convo, context_doc),
                 temperature=0.2,
                 max_tokens=350,
             )
@@ -516,9 +540,7 @@ def _chat_impl(req: ChatRequest):
         # --- Synthesizer: final grounded answer from the context document.
         ans = client.chat.completions.create(
             model=model,
-            messages=_final_answer_prompt(
-                req.message, (convo + "\n\n" + context_doc).strip() if convo else context_doc
-            ),
+            messages=_final_answer_prompt(req.message, convo, context_doc),
             temperature=0.2,
             max_tokens=max_tokens,
         )
