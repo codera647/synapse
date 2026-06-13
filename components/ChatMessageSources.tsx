@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { FiChevronDown, FiChevronUp, FiExternalLink, FiFileText } from "react-icons/fi";
+import { fetchChunkContext, type ChunkContext } from "@/lib/chunkContext";
 
 export type ChatSource = {
   library_id: string;
@@ -48,11 +49,10 @@ function extractDriveFileId(gdriveFileId?: string | null, storageKey?: string | 
   return null;
 }
 
-function SourcePreview({ s }: { s: ChatSource }) {
-  const before = (s.context_before || "").trim();
-  const after = (s.context_after || "").trim();
-  const snippet = (s.snippet || "").trim();
-  if (!snippet) return null;
+function SourcePreview({ s, resolved }: { s: ChatSource; resolved?: ChunkContext | null }) {
+  const snippet = (s.snippet || resolved?.text || "").trim();
+  const before = (s.context_before || resolved?.before || "").trim();
+  const after = (s.context_after || resolved?.after || "").trim();
   return (
     <div className="pointer-events-none absolute bottom-full left-0 z-30 mb-2 w-[min(380px,80vw)] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
       <div className="surface-menu rounded-xl p-3 text-left shadow-2xl shadow-black/50">
@@ -63,11 +63,15 @@ function SourcePreview({ s }: { s: ChatSource }) {
             <span className="ml-auto shrink-0 rounded bg-white/8 px-1.5 py-0.5">p.{s.page_start}</span>
           ) : null}
         </div>
-        <p className="max-h-44 overflow-hidden text-[11px] leading-relaxed text-white/55">
-          {before ? <span className="text-white/35">…{before} </span> : null}
-          <span className="rounded bg-violet-400/20 px-0.5 text-white/90">{snippet}</span>
-          {after ? <span className="text-white/35"> {after}…</span> : null}
-        </p>
+        {snippet ? (
+          <p className="max-h-44 overflow-hidden text-[11px] leading-relaxed text-white/55">
+            {before ? <span className="text-white/35">…{before} </span> : null}
+            <span className="rounded bg-violet-400/20 px-0.5 text-white/90">{snippet}</span>
+            {after ? <span className="text-white/35"> {after}…</span> : null}
+          </p>
+        ) : (
+          <p className="text-[11px] italic text-white/40">Loading preview…</p>
+        )}
         <div className="mt-2 text-[9px] uppercase tracking-wide text-white/30">Click to open in viewer</div>
       </div>
     </div>
@@ -82,6 +86,17 @@ export default function ChatMessageSources({
   onClickSource?: (s: ChatSource) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Chunk text fetched on demand by chunk_id (for the hover preview), keyed by chunk_id.
+  const [ctxByChunk, setCtxByChunk] = useState<Record<string, ChunkContext | null>>({});
+  const loadContext = useCallback(
+    (s: ChatSource) => {
+      const cid = String(s.chunk_id || "");
+      if (!cid || s.snippet) return; // nothing to do / already have it inline
+      if (cid in ctxByChunk) return; // already fetched
+      void fetchChunkContext(cid).then((ctx) => setCtxByChunk((m) => ({ ...m, [cid]: ctx })));
+    },
+    [ctxByChunk],
+  );
 
   const uniq = useMemo(() => {
     const out: ChatSource[] = [];
@@ -134,8 +149,12 @@ export default function ChatMessageSources({
           const driveHref = driveId ? `https://drive.google.com/file/d/${encodeURIComponent(driveId)}/view` : null;
 
           return (
-            <div key={`${s.doc_id}:${s.chunk_id ?? i}`} className="group relative">
-              <SourcePreview s={s} />
+            <div
+              key={`${s.doc_id}:${s.chunk_id ?? i}`}
+              className="group relative"
+              onMouseEnter={() => loadContext(s)}
+            >
+              <SourcePreview s={s} resolved={s.chunk_id ? ctxByChunk[String(s.chunk_id)] : null} />
               <button
                 type="button"
                 onClick={() => onClickSource?.(s)}

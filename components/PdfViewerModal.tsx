@@ -7,6 +7,7 @@ import "react-pdf/dist/Page/TextLayer.css";
 import { FiChevronLeft, FiChevronRight, FiExternalLink, FiX, FiZoomIn, FiZoomOut } from "react-icons/fi";
 import type { ChatSource } from "@/components/ChatMessageSources";
 import { prettyTitle } from "@/components/ChatMessageSources";
+import { fetchChunkContext } from "@/lib/chunkContext";
 
 // pdf.js worker from CDN (avoids bundler/worker config; runs only in the browser).
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -60,19 +61,48 @@ export default function PdfViewerModal({
     [],
   );
 
-  // Highlight target — the verbatim cited passage. Best-effort word-run matching in the text layer.
-  const highlightTarget = useMemo(() => normalize(source.snippet || ""), [source.snippet]);
+  // The verbatim cited passage to highlight. Use the inline snippet if present, else fetch it by
+  // chunk_id (works for reloaded threads where it wasn't persisted).
+  const [hlText, setHlText] = useState((source.snippet || "").trim());
+  useEffect(() => {
+    if (hlText || !source.chunk_id) return;
+    let alive = true;
+    fetchChunkContext(source.chunk_id).then((ctx) => {
+      if (alive && ctx?.text) setHlText(ctx.text);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [hlText, source.chunk_id]);
+
+  // Word-level highlight: build the set of meaningful words in the chunk and mark any that appear
+  // in the page's text layer. Far more robust than requiring whole text-runs to match.
+  const targetWords = useMemo(() => {
+    const set = new Set<string>();
+    for (const w of normalize(hlText).split(" ")) {
+      const clean = w.replace(/[^a-z0-9]/g, "");
+      if (clean.length >= 4) set.add(clean);
+    }
+    return set;
+  }, [hlText]);
+
   const customTextRenderer = useCallback(
     (textItem: { str: string }) => {
       const str = textItem.str || "";
-      const escaped = escapeHtml(str);
-      const n = normalize(str);
-      if (highlightTarget && n.length >= 4 && highlightTarget.includes(n)) {
-        return `<mark style="background-color:rgba(167,139,250,0.45);color:transparent;border-radius:2px;">${escaped}</mark>`;
-      }
-      return escaped;
+      if (!targetWords.size) return escapeHtml(str);
+      return str
+        .split(/(\s+)/)
+        .map((tok) => {
+          const clean = normalize(tok).replace(/[^a-z0-9]/g, "");
+          const e = escapeHtml(tok);
+          if (clean.length >= 4 && targetWords.has(clean)) {
+            return `<mark style="background-color:rgba(255,221,51,0.5);color:transparent;border-radius:2px;">${e}</mark>`;
+          }
+          return e;
+        })
+        .join("");
     },
-    [highlightTarget],
+    [targetWords],
   );
 
   // Measure available width so the page fits the modal.

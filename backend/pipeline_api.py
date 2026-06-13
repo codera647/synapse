@@ -402,6 +402,28 @@ def r2_delete_prefix(req: DeletePrefixRequest):
     return {"ok": not errors, "deleted": deleted_total, "prefixes": prefixes, "errors": errors}
 
 
+@router.get("/document/chunk")
+def document_chunk(chunk_id: str = Query(..., description="chunk_embeddings.chunk_id")):
+    """
+    Return a chunk's verbatim text + a little neighbour context, fetched on demand by chunk_id.
+    Powers the source hover preview and the in-app PDF highlight — works even for reloaded threads
+    where the snippet wasn't persisted with the message.
+    """
+    try:
+        from chat_runtime import fetch_chunk_snippets
+
+        info = fetch_chunk_snippets([chunk_id]).get(chunk_id) or {}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load chunk: {exc}")
+
+    return {
+        "chunk_id": chunk_id,
+        "text": info.get("text") or "",
+        "before": info.get("before") or "",
+        "after": info.get("after") or "",
+    }
+
+
 @router.get("/document/file")
 def document_file(
     doc_id: str = Query(..., description="documents.id"),
