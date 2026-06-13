@@ -3,6 +3,7 @@ import json
 import traceback
 import re
 import hashlib
+import threading
 from typing import Any, Dict, List, Optional
 
 from env_bootstrap import load_env
@@ -23,6 +24,37 @@ from chat_agents import critique_answer, extract_notes, merge_notes, plan_query
 load_env()
 
 router = APIRouter()
+
+
+# --- Live "what the agent is doing" status, keyed by client_request_id. The chat request runs
+# synchronously in a worker thread; the frontend polls GET /chat/status?rid=... while it waits.
+_PROGRESS_LOCK = threading.Lock()
+_PROGRESS: Dict[str, str] = {}
+
+
+def _set_progress(rid: Optional[str], stage: str) -> None:
+    if not rid:
+        return
+    with _PROGRESS_LOCK:
+        _PROGRESS[str(rid)] = stage
+        # Bound memory if many stale entries accumulate.
+        if len(_PROGRESS) > 500:
+            for k in list(_PROGRESS.keys())[:200]:
+                _PROGRESS.pop(k, None)
+
+
+def _clear_progress(rid: Optional[str]) -> None:
+    if not rid:
+        return
+    with _PROGRESS_LOCK:
+        _PROGRESS.pop(str(rid), None)
+
+
+@router.get("/chat/status")
+def chat_status(rid: str = ""):
+    with _PROGRESS_LOCK:
+        stage = _PROGRESS.get(str(rid), "")
+    return {"stage": stage}
 
 
 class ChatRequest(BaseModel):
@@ -491,7 +523,10 @@ def _chat_impl(req: ChatRequest):
 
     followups: List[Dict[str, Any]] = []
 
+    rid = req.client_request_id
+
     # --- Planner: chain-of-thought classify + query rewrite + decompose + retrieval gate.
+    _set_progress(rid, "Understanding your question")
     plan = plan_query(client, req.message, convo)
     query_class = plan.get("query_class") or "SPOTLIGHT"
     search_query = plan.get("search_query") or req.message
@@ -604,9 +639,11 @@ def _chat_impl(req: ChatRequest):
             for sq in sub_queries:
                 if sq and sq.lower() not in {q.lower() for q in initial_queries}:
                     initial_queries.append(sq)
+        _set_progress(rid, "Searching your libraries")
         initial_fresh: List[Dict[str, Any]] = []
         for q in initial_queries[:5]:
             initial_fresh.extend(_retrieve_only(q, eff_top_k))
+        _set_progress(rid, "Reading the most relevant passages")
         _ingest_notes(search_query, initial_fresh)
 
         if not rows:
@@ -634,14 +671,17 @@ def _chat_impl(req: ChatRequest):
             return (out.choices[0].message.content or "").strip()
 
         # --- Draft answer (text-only).
+        _set_progress(rid, "Drafting an answer")
         draft = _synthesize()
 
         # --- Completeness-critic loop (complex queries only): find gaps -> retrieve -> revise.
         if complex_query and max_critic_rounds > 0:
             for _crit_round in range(max_critic_rounds):
+                _set_progress(rid, "Reviewing the answer for gaps")
                 verdict = critique_answer(client, req.message, draft, context_doc)
                 if verdict.get("complete") or not verdict.get("missing"):
                     break
+                _set_progress(rid, "Digging deeper into the sources")
                 round_fresh: List[Dict[str, Any]] = []
                 for mq in verdict["missing"][:4]:
                     followups.append({"hop": len(followups) + 1, "query": mq})
@@ -650,6 +690,7 @@ def _chat_impl(req: ChatRequest):
                     break  # nothing new surfaced — stop rather than spin
                 _ingest_notes(req.message, round_fresh)
                 context_doc = build_context_document(notes) or build_evidence_brief(rows)
+                _set_progress(rid, "Revising the answer")
                 draft = _synthesize()  # revise with the augmented evidence
 
         # --- Gather figures/tables for the converged evidence, then do the FINAL synthesis with
@@ -663,7 +704,11 @@ def _chat_impl(req: ChatRequest):
             except Exception:
                 available_visuals = []
 
-        answer = _synthesize(visuals=available_visuals) if available_visuals else draft
+        if available_visuals:
+            _set_progress(rid, "Writing the final answer with figures")
+            answer = _synthesize(visuals=available_visuals)
+        else:
+            answer = draft
         # UI renders sources separately; strip any inline "(Source: ...)" the model might emit.
         answer = re.sub(r"\(\s*Source\s*:[^)]+\)", "", answer, flags=re.IGNORECASE).strip()
         answer, sources_used = _strip_and_detect_sources_used(answer)
@@ -738,6 +783,8 @@ def chat(req: ChatRequest):
         return _chat_impl(req)
     except Exception as exc:
         return _error_response(exc, "/chat")
+    finally:
+        _clear_progress(req.client_request_id)
 
 
 @router.post("/chat/")
@@ -746,3 +793,5 @@ def chat_slash(req: ChatRequest):
         return _chat_impl(req)
     except Exception as exc:
         return _error_response(exc, "/chat/")
+    finally:
+        _clear_progress(req.client_request_id)

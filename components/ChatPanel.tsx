@@ -113,6 +113,7 @@ type ChatMessage = {
   sources?: ChatSource[];
   visuals?: ChatVisual[];
   followups?: Array<{ hop: number; query: string }>;
+  stage?: string; // live "what the agent is doing" message while generating
 };
 
 function TypingIndicator() {
@@ -833,6 +834,8 @@ export default function ChatPanel({
       },
     });
 
+    let stageTimer: ReturnType<typeof setInterval> | null = null;
+
     try {
       const doFetch = async () =>
         fetch(`/api/backend/chat?rid=${encodeURIComponent(clientRequestId)}`, {
@@ -854,6 +857,22 @@ export default function ChatPanel({
           }),
           signal: ac.signal,
         });
+
+      // Poll the backend for the live "what the agent is doing" stage while it generates.
+      const pollStage = async () => {
+        try {
+          const r = await fetch(`/api/backend/chat/status?rid=${encodeURIComponent(clientRequestId)}`, {
+            cache: "no-store",
+          });
+          if (!r.ok) return;
+          const j = (await r.json()) as { stage?: string };
+          if (j?.stage) patchMessage(tid, draftId, { stage: String(j.stage) });
+        } catch {
+          /* ignore */
+        }
+      };
+      stageTimer = setInterval(() => void pollStage(), 800);
+      void pollStage();
 
       let res = await doFetch();
 
@@ -945,6 +964,12 @@ export default function ChatPanel({
         ? ((payload as ChatResponse).followups as Array<{ hop: number; query: string }>)
         : [];
 
+      // Answer is in hand — stop polling for the agent stage.
+      if (stageTimer) {
+        clearInterval(stageTimer);
+        stageTimer = null;
+      }
+
       lastAnswerRef.current = answer;
       lastPromptRef.current = userText;
 
@@ -1031,6 +1056,7 @@ export default function ChatPanel({
       patchMessage(tid, draftId, { status: "error", content: "Failed to reach backend." });
       onLog?.({ level: "error", message: "Chat: request crashed", details: err });
     } finally {
+      if (stageTimer) clearInterval(stageTimer);
       abortRef.current = null;
       assistantDraftIdRef.current = null;
       setThinking(false);
@@ -1276,7 +1302,11 @@ export default function ChatPanel({
                       </div>
 
                       {m.status === "streaming" && (m.content || "").trim().length === 0 ? (
-                        <TypingIndicator />
+                        <div className="flex items-center gap-2.5">
+                          <FiZap className="h-3.5 w-3.5 shrink-0 animate-pulse text-violet-300" />
+                          <span className="text-xs text-white/55">{m.stage || "Thinking"}</span>
+                          <TypingIndicator />
+                        </div>
                       ) : (
                         <div className="rounded-2xl rounded-tl-md glass px-4 py-3">
                           <ChatAnswer content={m.content} visuals={m.visuals} />
