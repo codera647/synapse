@@ -18,7 +18,42 @@ import {
   FiArrowUp,
   FiCheck,
   FiZap,
+  FiAlertTriangle,
+  FiRefreshCw,
 } from "react-icons/fi";
+
+/** Map any chat failure (HTTP status + payload) to a short, friendly user message.
+ *  Technical details still go to the log panel; the user only sees this. */
+function friendlyChatError(status: number, payload: unknown): string {
+  const text = (() => {
+    try {
+      return JSON.stringify(payload ?? {}).toLowerCase();
+    } catch {
+      return String(payload ?? "").toLowerCase();
+    }
+  })();
+  const has = (...keys: string[]) => keys.some((k) => text.includes(k));
+
+  if (has("model", "does not exist") || has("invalid model") || has("model_not_found")) {
+    return "The AI model is currently unavailable. Please try again shortly.";
+  }
+  if (status === 429 || has("rate limit", "too many requests", "quota", "insufficient_quota")) {
+    return "The service is busy right now. Please wait a few seconds and try again.";
+  }
+  if (status === 401 || status === 403 || has("api key", "unauthorized", "permission denied")) {
+    return "There’s a configuration problem on the server. Please contact the admin.";
+  }
+  if (status === 0 || status === 502 || status === 503 || status === 504 || has("failed to reach", "unable to reach", "fetch failed", "econnrefused", "network")) {
+    if (has("timed out", "timeout", "aborted")) return "The server took too long to respond. Please try again.";
+    return "Can’t reach the AI backend right now — it may be starting up. Please try again in a moment.";
+  }
+  if (has("timed out", "timeout")) return "The request took too long. Please try again.";
+  if (status === 400) {
+    if (has("library")) return "Please select a processed library to chat with.";
+    return "There was a problem with your request. Please try again.";
+  }
+  return "Something went wrong while generating the answer. Please try again.";
+}
 
 type ThinkingMode = "low" | "medium" | "high";
 const THINKING_MODE_META: Record<ThinkingMode, { label: string; desc: string }> = {
@@ -116,17 +151,9 @@ type ChatMessage = {
   citations?: ChatCitation[];
   followups?: Array<{ hop: number; query: string }>;
   stage?: string; // live "what the agent is doing" message while generating
+  retryText?: string; // for error messages: the user prompt to retry
 };
 
-function TypingIndicator() {
-  return (
-    <div className="synapse-typing" aria-label="Thinking">
-      <span className="synapse-typing__dot" />
-      <span className="synapse-typing__dot" />
-      <span className="synapse-typing__dot" />
-    </div>
-  );
-}
 
 function makeId() {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
@@ -694,8 +721,9 @@ export default function ChatPanel({
     }
   };
 
-  const send = async () => {
-    if (!prompt.trim()) return;
+  const send = async (overrideText?: string) => {
+    const sourceText = overrideText ?? prompt;
+    if (!sourceText.trim()) return;
     if (thinking) return;
 
     let tid = await ensureThread();
@@ -751,8 +779,8 @@ export default function ChatPanel({
     const ac = new AbortController();
     abortRef.current = ac;
 
-    const userText = prompt.trim();
-    setPrompt("");
+    const userText = sourceText.trim();
+    if (!overrideText) setPrompt("");
 
     // Add the user message in the SAME synchronous batch as setPrompt("") — i.e. BEFORE any
     // await below — so the context ring doesn't briefly dip. Clearing the draft removes its
@@ -887,9 +915,12 @@ export default function ChatPanel({
       }
 
       if (!res.ok) {
-        const msg = String((payload as { error?: unknown })?.error || `Chat backend failed (${res.status}).`);
-        patchMessage(tid, draftId, { status: "error", content: msg });
-        onLog?.({ level: "error", message: "Chat: backend error", details: payload });
+        patchMessage(tid, draftId, {
+          status: "error",
+          content: friendlyChatError(res.status, payload),
+          retryText: userText,
+        });
+        onLog?.({ level: "error", message: "Chat: backend error", details: { status: res.status, payload } });
         return;
       }
 
@@ -925,7 +956,11 @@ export default function ChatPanel({
         res = await doFetch();
         if (!res.ok) {
           const errText = await res.text();
-          patchMessage(tid, draftId, { status: "error", content: `Chat backend failed (${res.status}).` });
+          patchMessage(tid, draftId, {
+            status: "error",
+            content: friendlyChatError(res.status, errText),
+            retryText: userText,
+          });
           onLog?.({ level: "error", message: "Chat: backend error during stale retry", details: errText });
           return;
         }
@@ -941,8 +976,8 @@ export default function ChatPanel({
         // Never render a one-behind / mismatched answer — surface it instead so the user retries.
         patchMessage(tid, draftId, {
           status: "error",
-          content:
-            "The server kept returning a stale response meant for a previous message (usually the temporary backend tunnel). Please send your message again.",
+          content: "The server kept returning an out-of-date response. Please try again.",
+          retryText: userText,
         });
         onLog?.({
           level: "error",
@@ -1058,7 +1093,11 @@ export default function ChatPanel({
       }
     } catch (err) {
       if (ac.signal.aborted) return;
-      patchMessage(tid, draftId, { status: "error", content: "Failed to reach backend." });
+      patchMessage(tid, draftId, {
+        status: "error",
+        content: friendlyChatError(0, err instanceof Error ? err.message : err),
+        retryText: userText,
+      });
       onLog?.({ level: "error", message: "Chat: request crashed", details: err });
     } finally {
       if (stageTimer) clearInterval(stageTimer);
@@ -1300,11 +1339,28 @@ export default function ChatPanel({
                         <span className="text-[10px] text-white/30">{formatClock(m.ts)}</span>
                       </div>
 
-                      {m.status === "streaming" && (m.content || "").trim().length === 0 ? (
+                      {m.status === "error" ? (
+                        <div className="rounded-2xl rounded-tl-md border border-rose-500/40 bg-rose-500/10 px-4 py-3">
+                          <div className="flex items-start gap-2.5">
+                            <FiAlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-rose-100">{m.content}</div>
+                              {m.retryText ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void send(m.retryText)}
+                                  className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-rose-400/30 bg-rose-500/15 px-2.5 py-1 text-[11px] font-medium text-rose-100 hover:bg-rose-500/25 transition-colors"
+                                >
+                                  <FiRefreshCw className="h-3 w-3" /> Try again
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      ) : m.status === "streaming" && (m.content || "").trim().length === 0 ? (
                         <div className="flex items-center gap-2.5">
                           <FiZap className="h-3.5 w-3.5 shrink-0 animate-pulse text-violet-300" />
                           <span className="text-xs text-white/55">{m.stage || "Thinking"}</span>
-                          <TypingIndicator />
                         </div>
                       ) : (
                         <div className="rounded-2xl rounded-tl-md glass px-4 py-3">
@@ -1323,7 +1379,7 @@ export default function ChatPanel({
                         </div>
                       )}
 
-                      {m.status !== "streaming" && m.status !== "typing" ? (
+                      {m.status !== "streaming" && m.status !== "typing" && m.status !== "error" ? (
                         <div className="mt-2 flex items-center gap-2">
                           <button
                             type="button"
