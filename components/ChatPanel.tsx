@@ -805,14 +805,42 @@ export default function ChatPanel({
         return;
       }
 
-      const echoed = (payload as ChatResponse)?.client_request_id ?? null;
-      if (echoed && echoed !== clientRequestId) {
+      // Stale-response guard. The backend echoes our client_request_id and a SHA-1 of the exact
+      // prompt it processed (server_prompt_hash). A flaky tunnel/proxy can return a buffered,
+      // one-behind response — if we render that, the chat shows the PREVIOUS turn's answer. So we
+      // retry until the response provably matches THIS request, and refuse to render a mismatched
+      // answer rather than silently showing the wrong one.
+      const matchesRequest = (p: ChatResponse | { answer: string;[k: string]: unknown }) => {
+        const echoed = (p as ChatResponse)?.client_request_id ?? null;
+        const serverHash = (p as ChatResponse)?.server_prompt_hash ?? null;
+        const idOk = !echoed || echoed === clientRequestId;
+        const hashOk = !clientPromptHash || !serverHash || serverHash === clientPromptHash;
+        return idOk && hashOk;
+      };
+
+      const MAX_STALE_RETRIES = 4;
+      let staleAttempts = 0;
+      while (!matchesRequest(payload) && staleAttempts < MAX_STALE_RETRIES) {
+        staleAttempts += 1;
         onLog?.({
           level: "warn",
-          message: "Chat: stale response detected; retrying once",
-          details: { expected: clientRequestId, got: echoed },
+          message: `Chat: stale response detected (attempt ${staleAttempts}/${MAX_STALE_RETRIES}); retrying`,
+          details: {
+            expected_request_id: clientRequestId,
+            got_request_id: (payload as ChatResponse)?.client_request_id ?? null,
+            expected_prompt_hash: clientPromptHash,
+            got_prompt_hash: (payload as ChatResponse)?.server_prompt_hash ?? null,
+          },
         });
+        // Small backoff so the upstream buffer can flush the stale entry.
+        await new Promise((r) => setTimeout(r, 150 * staleAttempts));
         res = await doFetch();
+        if (!res.ok) {
+          const errText = await res.text();
+          patchMessage(tid, draftId, { status: "error", content: `Chat backend failed (${res.status}).` });
+          onLog?.({ level: "error", message: "Chat: backend error during stale retry", details: errText });
+          return;
+        }
         raw = await res.text();
         try {
           payload = JSON.parse(raw) as ChatResponse;
@@ -821,21 +849,24 @@ export default function ChatPanel({
         }
       }
 
-      // Strong stale-response guard: ensure backend processed the prompt we sent.
-      const serverHash = (payload as ChatResponse)?.server_prompt_hash ?? null;
-      if (clientPromptHash && serverHash && clientPromptHash !== serverHash) {
-        onLog?.({
-          level: "warn",
-          message: "Chat: prompt hash mismatch; retrying once",
-          details: { expected: clientPromptHash, got: serverHash },
+      if (!matchesRequest(payload)) {
+        // Never render a one-behind / mismatched answer — surface it instead so the user retries.
+        patchMessage(tid, draftId, {
+          status: "error",
+          content:
+            "The server kept returning a stale response meant for a previous message (usually the temporary backend tunnel). Please send your message again.",
         });
-        res = await doFetch();
-        raw = await res.text();
-        try {
-          payload = JSON.parse(raw) as ChatResponse;
-        } catch {
-          payload = { answer: raw };
-        }
+        onLog?.({
+          level: "error",
+          message: "Chat: persistent stale response; refusing to render mismatched answer",
+          details: {
+            expected_request_id: clientRequestId,
+            got_request_id: (payload as ChatResponse)?.client_request_id ?? null,
+            expected_prompt_hash: clientPromptHash,
+            got_prompt_hash: (payload as ChatResponse)?.server_prompt_hash ?? null,
+          },
+        });
+        return;
       }
 
       const answer = typeof payload?.answer === "string" ? payload.answer : JSON.stringify(payload, null, 2);
@@ -844,42 +875,14 @@ export default function ChatPanel({
         ? ((payload as ChatResponse).followups as Array<{ hop: number; query: string }>)
         : [];
 
-      // Extra guardrail: if we get the exact same answer as the previous turn but the prompt changed,
-      // assume tunnel/proxy staleness and retry once.
-      if (
-        lastAnswerRef.current &&
-        lastPromptRef.current &&
-        lastAnswerRef.current.trim() === answer.trim() &&
-        lastPromptRef.current.trim() !== userText.trim()
-      ) {
-        onLog?.({
-          level: "warn",
-          message: "Chat: duplicate answer detected; retrying once",
-          details: { previous_prompt: lastPromptRef.current, current_prompt: userText },
-        });
-        res = await doFetch();
-        raw = await res.text();
-        try {
-          payload = JSON.parse(raw) as ChatResponse;
-        } catch {
-          payload = { answer: raw };
-        }
-      }
-
-      const finalAnswer = typeof payload?.answer === "string" ? payload.answer : JSON.stringify(payload, null, 2);
-      const finalSources = Array.isArray(payload?.sources) ? payload.sources : [];
-      const finalFollowups: Array<{ hop: number; query: string }> = Array.isArray((payload as ChatResponse)?.followups)
-        ? ((payload as ChatResponse).followups as Array<{ hop: number; query: string }>)
-        : [];
-
-      lastAnswerRef.current = finalAnswer;
+      lastAnswerRef.current = answer;
       lastPromptRef.current = userText;
       onSources?.(sources);
-      patchMessage(tid, draftId, { status: "done", content: finalAnswer, sources: finalSources, followups: finalFollowups });
+      patchMessage(tid, draftId, { status: "done", content: answer, sources, followups });
       onLog?.({
         level: "success",
         message: "Chat: response received",
-        details: { sources: finalSources.length, followups: finalFollowups.length },
+        details: { sources: sources.length, followups: followups.length, stale_retries: staleAttempts },
       });
 
       // Persist assistant message + sources.

@@ -51,3 +51,6 @@ next-env.d.ts
 **/__pycache__/
 *.pyc
 .pytest_cache/
+
+# apis
+api-open-router.txt
