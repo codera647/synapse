@@ -201,6 +201,9 @@ export default function ChatPanel({
   const lastAnswerRef = useRef<string | null>(null);
   const lastPromptRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Whether the chat is "stuck" to the bottom — true while the user is near the bottom, so the
+  // view follows streaming/typing text. Set false when they scroll up to read history.
+  const stickToBottomRef = useRef(true);
 
   const [prompt, setPrompt] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -800,6 +803,8 @@ export default function ChatPanel({
       ts: Date.now(),
       status: "done",
     };
+    // Sending always re-arms auto-follow so the user sees their message + the typing answer.
+    stickToBottomRef.current = true;
     pushMessage(tid, userMsg);
 
     const clientRequestId =
@@ -1088,12 +1093,22 @@ export default function ChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeThreadId]);
 
+  // Switching threads always jumps to the bottom and re-arms auto-follow.
   useEffect(() => {
-    // Keep chat pinned to bottom for the active thread.
+    stickToBottomRef.current = true;
+  }, [activeThreadId]);
+
+  // Follow the conversation as it grows — including while the answer types out (content changes,
+  // not just message count) — but only if the user is near the bottom (so scrolling up to read
+  // history isn't yanked back down).
+  const lastMessageContent = displayMessages[displayMessages.length - 1]?.content ?? "";
+  useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [activeThreadId, displayMessages.length, thinking]);
+    if (stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [activeThreadId, displayMessages.length, thinking, lastMessageContent]);
 
   const suggestions = [
     "Summarize the key findings across my documents.",
@@ -1257,7 +1272,16 @@ export default function ChatPanel({
         </header>
 
         {/* Messages */}
-        <div ref={scrollRef} className="synapse-scroll flex-1 min-h-0 overflow-auto px-3 sm:px-6 py-6">
+        <div
+          ref={scrollRef}
+          onScroll={() => {
+            const el = scrollRef.current;
+            if (!el) return;
+            // Re-arm follow only when the user is within ~80px of the bottom.
+            stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          }}
+          className="synapse-scroll flex-1 min-h-0 overflow-auto px-3 sm:px-6 py-6"
+        >
           {activeThreadId && displayMessages.length > 0 ? (
             <div className="mx-auto w-full max-w-3xl space-y-6">
               {displayMessages.map((m) => {
