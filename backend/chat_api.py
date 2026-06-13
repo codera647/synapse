@@ -387,6 +387,22 @@ def _build_sources_from(
         )
         if len(sources) >= limit:
             break
+
+    # Attach the verbatim chunk text + a little neighbour context, used by the frontend for the
+    # hover popover and to highlight the passage inside the in-app PDF viewer. Best-effort.
+    try:
+        from chat_runtime import fetch_chunk_snippets
+
+        cids = [str(s.get("chunk_id")) for s in sources if s.get("chunk_id")]
+        snips = fetch_chunk_snippets(cids)
+        for s in sources:
+            info = snips.get(str(s.get("chunk_id") or "")) or {}
+            s["snippet"] = info.get("text") or None
+            s["context_before"] = info.get("before") or None
+            s["context_after"] = info.get("after") or None
+    except Exception:
+        pass
+
     return sources
 
 

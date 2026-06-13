@@ -390,3 +390,66 @@ def build_context_document(notes: List[Dict[str, Any]], max_chars: int = 14000) 
             lines.append(block)
             used += len(block) + 1
     return "\n".join(lines)
+
+
+def fetch_chunk_snippets(chunk_ids: List[str], edge_chars: int = 220) -> Dict[str, Dict[str, str]]:
+    """
+    For each chunk_id ("<doc_id>_cNNNN"), return the chunk's own VERBATIM text plus a short edge of
+    the previous/next chunk — so the UI can show the exact cited passage with a line or two of
+    surrounding context, and highlight that passage inside the PDF.
+
+    Returns {chunk_id: {"text": ..., "before": ..., "after": ...}}. Best-effort; missing pieces
+    come back as empty strings. One batched query for the chunks and all their neighbours.
+    """
+    ids = [str(c) for c in (chunk_ids or []) if str(c or "")]
+    if not ids:
+        return {}
+
+    import re as _re
+
+    out: Dict[str, Dict[str, str]] = {c: {"text": "", "before": "", "after": ""} for c in ids}
+    neighbor_map: Dict[str, List[Tuple[str, str]]] = {}
+    fetch_ids = set(ids)
+    for cid in ids:
+        m = _re.match(r"^(.*)_c(\d+)$", cid)
+        if not m:
+            continue
+        base, num_s = m.group(1), m.group(2)
+        width = len(num_s)
+        num = int(num_s)
+        if num - 1 >= 0:
+            pid = f"{base}_c{str(num - 1).zfill(width)}"
+            neighbor_map.setdefault(pid, []).append((cid, "before"))
+            fetch_ids.add(pid)
+        nid = f"{base}_c{str(num + 1).zfill(width)}"
+        neighbor_map.setdefault(nid, []).append((cid, "after"))
+        fetch_ids.add(nid)
+
+    try:
+        res = (
+            supabase.table("chunk_embeddings")
+            .select("chunk_id,text")
+            .in_("chunk_id", list(fetch_ids))
+            .execute()
+        )
+    except Exception:
+        return out
+
+    by_id: Dict[str, str] = {}
+    for r in (res.data or []):
+        if isinstance(r, dict):
+            by_id[str(r.get("chunk_id"))] = (r.get("text") or "").strip()
+
+    for cid in ids:
+        if cid in by_id:
+            out[cid]["text"] = by_id[cid]
+    for nid, targets in neighbor_map.items():
+        txt = by_id.get(nid, "")
+        if not txt:
+            continue
+        for (src_cid, pos) in targets:
+            if pos == "before":
+                out[src_cid]["before"] = txt[-edge_chars:]
+            else:
+                out[src_cid]["after"] = txt[:edge_chars]
+    return out

@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional
 
 import boto3
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from supabase import create_client
 
@@ -399,3 +400,66 @@ def r2_delete_prefix(req: DeletePrefixRequest):
             errors.append(f"{prefix}: {exc}")
 
     return {"ok": not errors, "deleted": deleted_total, "prefixes": prefixes, "errors": errors}
+
+
+@router.get("/document/file")
+def document_file(
+    doc_id: str = Query(..., description="documents.id"),
+    organization_id: Optional[str] = Query(None, description="org guard"),
+):
+    """
+    Stream a document's raw PDF from R2 so the frontend can render it in-app (in-tool PDF viewer)
+    and highlight the cited chunk. Served as a binary stream — the frontend reaches this through a
+    dedicated Next.js binary proxy (app/api/pdf), NOT the generic text proxy.
+    """
+    try:
+        res = (
+            supabase.table("documents")
+            .select("id,organization_id,storage_path_raw,mime_type,title")
+            .eq("id", doc_id)
+            .single()
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"Document not found: {exc}")
+
+    d = res.data
+    if not d:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if organization_id and str(d.get("organization_id")) != str(organization_id):
+        raise HTTPException(status_code=403, detail="Document does not belong to this organization.")
+
+    key = d.get("storage_path_raw")
+    if not key:
+        raise HTTPException(status_code=404, detail="No stored raw file for this document.")
+    if not _R2_BUCKET:
+        raise HTTPException(status_code=500, detail="R2_BUCKET not configured")
+
+    try:
+        obj = s3.get_object(Bucket=_R2_BUCKET, Key=key)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to read file from storage: {exc}")
+
+    body = obj["Body"]  # botocore StreamingBody
+
+    def _iter(chunk_size: int = 65536):
+        try:
+            while True:
+                data = body.read(chunk_size)
+                if not data:
+                    break
+                yield data
+        finally:
+            try:
+                body.close()
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        _iter(),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": 'inline; filename="document.pdf"',
+            "Cache-Control": "private, max-age=300",
+        },
+    )

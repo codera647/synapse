@@ -18,9 +18,13 @@ import {
   FiArrowUp,
   FiCheck,
 } from "react-icons/fi";
+import dynamic from "next/dynamic";
 import ChatMarkdown from "@/components/ChatMarkdown";
 import ChatMessageSources from "@/components/ChatMessageSources";
 import ContextMeter from "@/components/ContextMeter";
+
+// react-pdf renders only in the browser (no SSR).
+const PdfViewerModal = dynamic(() => import("@/components/PdfViewerModal"), { ssr: false });
 
 type LibraryLite = {
   id: string;
@@ -42,6 +46,9 @@ type ChatSource = {
   chunk_id?: string | null;
   score?: number | null;
   storage_path_raw?: string | null;
+  snippet?: string | null;
+  context_before?: string | null;
+  context_after?: string | null;
 };
 
 type ChatResponse = {
@@ -125,45 +132,6 @@ function isUuid(v: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 }
 
-function extractDriveFileId(gdriveFileId?: string | null, storageKey?: string | null) {
-  const candidates = [gdriveFileId || "", storageKey || ""];
-  for (const s of candidates) {
-    const text = String(s || "").trim();
-    if (!text) continue;
-
-    // Full Google Drive URL
-    let m = /drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]{10,})/i.exec(text);
-    if (m?.[1]) return m[1];
-    m = /[?&]id=([a-zA-Z0-9_-]{20,})/i.exec(text);
-    if (m?.[1]) return m[1];
-
-    // Raw file id
-    if (/^[a-zA-Z0-9_-]{20,}$/.test(text)) return text;
-
-    // Common sync key pattern: "...raw_<fileId>-<filename>.pdf" but fileId itself may contain '-',
-    // so use a heuristic on the basename.
-    const base = text.split("/").pop() || text;
-    const rawIdx = base.toLowerCase().indexOf("raw_");
-    if (rawIdx >= 0) {
-      const after = base.slice(rawIdx + 4);
-      const parts = after.split("-");
-      // Build up segments until we have a plausible Drive id (>=25 chars) and the next token looks like a filename.
-      const idParts: string[] = [];
-      for (let i = 0; i < Math.max(0, parts.length - 1); i++) {
-        idParts.push(parts[i] || "");
-        const candidate = idParts.join("-");
-        const next = parts[i + 1] || "";
-        if (candidate.length >= 25 && /\\.pdf$/i.test(next)) return candidate;
-        if (candidate.length >= 25 && /\\.[a-z0-9]{2,4}$/i.test(next)) return candidate;
-      }
-      // Fallback: take a long token prefix
-      const fallback = after.match(/[a-zA-Z0-9_-]{25,}/)?.[0];
-      if (fallback) return fallback;
-    }
-  }
-  return null;
-}
-
 const SUMMARY_MARKER = "[[SYNAPSE_THREAD_SUMMARY]]";
 
 function extractSummary(content: string) {
@@ -210,6 +178,8 @@ export default function ChatPanel({
   // True while context-window auto-compaction is summarizing a full chat and spawning the
   // linked continuation thread — drives the "starting a linked chat…" loading banner.
   const [compacting, setCompacting] = useState(false);
+  // The source whose PDF is open in the in-app viewer (null = closed).
+  const [pdfSource, setPdfSource] = useState<ChatSource | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [threadQuery, setThreadQuery] = useState("");
   const [historyOpen, setHistoryOpen] = useState(true);
@@ -686,50 +656,10 @@ export default function ChatPanel({
     }
   };
 
-  const openSourcePdf = async (s: ChatSource) => {
-    try {
-      // Prefer resolving directly from the source row (no DB roundtrip; avoids RLS failures).
-      const directFileId = extractDriveFileId(s.gdrive_file_id ?? null, s.storage_path_raw ?? null);
-      if (directFileId) {
-        const url = `https://drive.google.com/file/d/${encodeURIComponent(directFileId)}/view`;
-        window.open(url, "_blank", "noopener,noreferrer");
-        return;
-      }
-
-      // Fall back to doc lookup (best-effort) to find the Drive file id.
-      if (!organization?.id) return;
-      const docId = String(s.doc_id || "").trim();
-      if (!docId) return;
-
-      const { data, error } = await supabase
-        .from("documents")
-        .select("id, gdrive_file_id, storage_path_raw")
-        .eq("id", docId)
-        .single();
-
-      if (error) {
-        onLog?.({ level: "warn", message: "Chat: failed to load document metadata", details: error });
-        return;
-      }
-
-      const fileId = extractDriveFileId(
-        (data as unknown as { gdrive_file_id?: string | null })?.gdrive_file_id ?? null,
-        (data as unknown as { storage_path_raw?: string | null })?.storage_path_raw ?? null
-      );
-      if (!fileId) {
-        onLog?.({
-          level: "warn",
-          message: "Chat: could not resolve Google Drive file id for this PDF",
-          details: { doc_id: docId, gdrive_file_id: (data as unknown as { gdrive_file_id?: string | null })?.gdrive_file_id, storage_path_raw: (data as unknown as { storage_path_raw?: string | null })?.storage_path_raw },
-        });
-        return;
-      }
-
-      const url = `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`;
-      window.open(url, "_blank", "noopener,noreferrer");
-    } catch (err) {
-      onLog?.({ level: "error", message: "Chat: open PDF crashed", details: err });
-    }
+  // Open the cited PDF inside the tool (in-app viewer), jumping to the cited page and highlighting
+  // the chunk. The viewer streams the raw file from R2 via /api/pdf.
+  const openSourcePdf = (s: ChatSource) => {
+    setPdfSource(s);
   };
 
   const send = async () => {
@@ -1500,6 +1430,14 @@ export default function ChatPanel({
           </div>
         </div>
       </div>
+
+      {pdfSource ? (
+        <PdfViewerModal
+          source={pdfSource}
+          organizationId={organization?.id ?? null}
+          onClose={() => setPdfSource(null)}
+        />
+      ) : null}
     </div>
   );
 }
