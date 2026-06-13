@@ -247,12 +247,14 @@ def _final_answer_prompt(
     visual_rule = ""
     if visuals:
         visual_rule = (
-            "Some figures/tables from the sources are listed under AVAILABLE_VISUALS (each has an id "
-            "and caption). If a visual genuinely helps answer, EMBED it inline by writing a marker on "
-            "its own line exactly: [[VISUAL:<id>]] — placed right after the sentence or paragraph it "
-            "illustrates — and add one short sentence explaining what it shows. Use at most 3 visuals, "
-            "only when clearly relevant. Use ONLY ids from AVAILABLE_VISUALS; never invent an id. If "
-            "none are relevant, embed none.\n"
+            "AVAILABLE_VISUALS lists figures/tables/charts from the user's PDFs (each has an id and "
+            "caption). These are valuable — when one illustrates, supports, or visualizes a point you "
+            "make (an architecture, a process, a result/chart, a comparison table, an example figure), "
+            "EMBED it inline by writing a marker on its OWN line exactly: [[VISUAL:<id>]] — right after "
+            "the sentence or paragraph it relates to — and add one short sentence explaining what it "
+            "shows. FAVOR including relevant visuals: if any caption clearly relates to your answer, "
+            "embed it. Include up to 3. Use ONLY ids from AVAILABLE_VISUALS; never invent one. Skip a "
+            "visual only if none relate to the answer.\n"
         )
     if citations:
         citation_rule = (
@@ -767,8 +769,10 @@ def _chat_impl(req: ChatRequest):
         available_visuals: List[Dict[str, Any]] = []
         if str(os.getenv("CHAT_ENABLE_VISUALS", "1")).strip() not in {"0", "false", "False"}:
             try:
-                vis_chunk_ids = [str(it.get("chunk_id")) for it in source_items if it.get("chunk_id")]
-                available_visuals = fetch_chunk_visuals(vis_chunk_ids)
+                # Gather candidate figures/tables from ALL retrieved chunks (broader recall), so the
+                # synthesizer has more relevant visuals to choose from — not just the cited ones.
+                vis_chunk_ids = [str(r.get("chunk_id")) for r in rows if r.get("chunk_id")]
+                available_visuals = fetch_chunk_visuals(vis_chunk_ids, max_visuals=16)
             except Exception:
                 available_visuals = []
 
