@@ -191,6 +191,7 @@ export default function ChatPanel({
   onChangeSelectedLibraryIds,
   onSources,
   onLog,
+  scope = "personal",
 }: {
   supabase: SupabaseClient;
   organization: OrgLite | null;
@@ -199,7 +200,11 @@ export default function ChatPanel({
   onChangeSelectedLibraryIds: (ids: string[]) => void;
   onSources?: (sources: ChatSource[]) => void;
   onLog?: (e: { level: "info" | "warn" | "error" | "success"; message: string; details?: unknown }) => void;
+  // "personal" = your private chats over your libraries; "team" = shared chats over the team's
+  // pooled (cross-org) libraries.
+  scope?: "personal" | "team";
 }) {
+  const isTeam = scope === "team";
   const abortRef = useRef<AbortController | null>(null);
   const assistantDraftIdRef = useRef<string | null>(null);
   const lastAnswerRef = useRef<string | null>(null);
@@ -331,19 +336,16 @@ export default function ChatPanel({
 
   const loadThreads = async () => {
     if (!organization?.id) return;
-    // Personal chat is PRIVATE: only the current user's own, non-team threads. (Team-mode threads
-    // are shared and loaded separately — Phase 2.)
     const { data: userRes } = await supabase.auth.getUser();
     const uid = userRes?.user?.id;
     if (!uid) return;
-    const { data, error } = await supabase
+    // Personal = your own private threads; Team = the team's shared threads (all members).
+    let qb = supabase
       .from("chat_threads")
       .select("id, title, updated_at, selected_library_ids, parent_thread_id, root_thread_id")
-      .eq("organization_id", organization.id)
-      .eq("created_by_user_id", uid)
-      .eq("is_team", false)
-      .order("updated_at", { ascending: false })
-      .limit(80);
+      .eq("organization_id", organization.id);
+    qb = isTeam ? qb.eq("is_team", true) : qb.eq("created_by_user_id", uid).eq("is_team", false);
+    const { data, error } = await qb.order("updated_at", { ascending: false }).limit(80);
 
     if (error) {
       onLog?.({ level: "warn", message: "Chat: failed to load threads", details: error });
@@ -536,6 +538,7 @@ export default function ChatPanel({
         updated_at: new Date().toISOString(),
         parent_thread_id: lineage?.parentThreadId ?? null,
         root_thread_id: lineage?.rootThreadId ?? null,
+        is_team: isTeam,
       })
       .select("id, title, updated_at, selected_library_ids, parent_thread_id, root_thread_id")
       .single();
@@ -601,6 +604,7 @@ export default function ChatPanel({
         title: "New chat",
         selected_library_ids: selectedLibraryIds,
         updated_at: new Date().toISOString(),
+        is_team: isTeam,
       })
       .select("id, title, updated_at, selected_library_ids")
       .single();
@@ -861,6 +865,7 @@ export default function ChatPanel({
             library_ids: selectedLibraryIds,
             message: userText,
             thinking_mode: thinkingMode,
+            cross_org: isTeam,
             client_request_id: clientRequestId,
             client_prompt_hash: clientPromptHash,
             // Context window inputs (summary + last few turns).
@@ -1126,14 +1131,15 @@ export default function ChatPanel({
   }, []);
 
   useEffect(() => {
-    // Load persisted threads whenever org changes.
+    // Load persisted threads whenever the org OR the chat scope (personal/team) changes.
     setThreads([]);
     setActiveThreadId(null);
     setMessagesByThread({});
+    createdLocallyRef.current.clear();
     if (!organization?.id) return;
     void loadThreads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [organization?.id]);
+  }, [organization?.id, scope]);
 
   useEffect(() => {
     if (!activeThreadId) return;

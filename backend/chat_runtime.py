@@ -96,14 +96,17 @@ def _keywords(q: str) -> List[str]:
     return out[:12]
 
 def keyword_search_chunks(
-    organization_id: str,
+    organization_id: Optional[str],
     library_ids: List[str],
     query_text: str,
     top_k: int = 8,
+    cross_org: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Cheap lexical fallback (works even if the vector match RPC isn't installed).
     Not as strong as BM25/FTS, but saves us from hard failures.
+
+    cross_org=True (TEAM chat): filter by library_id only — the pooled libraries may span orgs.
     """
     library_ids = [str(x) for x in (library_ids or []) if str(x)]
     if not library_ids:
@@ -121,11 +124,14 @@ def keyword_search_chunks(
     limit = max(40, int(top_k) * 8)
     for lib_id in library_ids[:8]:
         try:
-            res = (
+            q = (
                 supabase.table("chunk_embeddings")
                 .select("chunk_id,doc_id,library_id,page_start,page_end,text,embedding_text")
-                .eq("organization_id", organization_id)
-                .eq("library_id", lib_id)
+            )
+            if not cross_org and organization_id:
+                q = q.eq("organization_id", organization_id)
+            res = (
+                q.eq("library_id", lib_id)
                 .or_(or_expr)
                 .order("updated_at", desc=True)
                 .limit(limit)
@@ -182,10 +188,11 @@ def _cosine_topk_from_rows(query_vec: List[float], rows: List[Dict[str, Any]], k
 
 
 def retrieve_chunks(
-    organization_id: str,
+    organization_id: Optional[str],
     library_ids: List[str],
     query_vec: List[float],
     top_k: int = 8,
+    cross_org: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Returns chunk rows with at least:
@@ -193,22 +200,32 @@ def retrieve_chunks(
     Strategy:
       1) Try Supabase RPC `match_chunk_embeddings` if user created it.
       2) Fallback: pull a limited set of rows + compute cosine locally (OK for small libs).
+
+    cross_org=True (TEAM chat): use the by-libraries RPC so pooled libraries spanning members'
+    organizations are all searched (org filter dropped; access authorized before the call).
     """
     library_ids = [str(x) for x in (library_ids or []) if str(x)]
     if not library_ids:
         return []
 
-    rpc_name = os.getenv("CHAT_MATCH_RPC", "match_chunk_embeddings").strip() or "match_chunk_embeddings"
     try:
-        resp = supabase.rpc(
-            rpc_name,
-            {
+        if cross_org:
+            rpc_name = os.getenv("CHAT_MATCH_RPC_BY_LIB", "match_chunk_embeddings_by_libraries").strip() \
+                or "match_chunk_embeddings_by_libraries"
+            params = {
+                "p_library_ids": library_ids,
+                "p_query_embedding": query_vec,
+                "p_match_count": int(top_k),
+            }
+        else:
+            rpc_name = os.getenv("CHAT_MATCH_RPC", "match_chunk_embeddings").strip() or "match_chunk_embeddings"
+            params = {
                 "p_organization_id": organization_id,
                 "p_library_ids": library_ids,
                 "p_query_embedding": query_vec,
                 "p_match_count": int(top_k),
-            },
-        ).execute()
+            }
+        resp = supabase.rpc(rpc_name, params).execute()
         rows = resp.data or []
         # normalize shape
         out = []
@@ -227,22 +244,23 @@ def retrieve_chunks(
                 }
             )
         if str(os.getenv("CHAT_EXPAND_NEIGHBORS", "1")).strip() not in {"0", "false", "False"}:
-            out = expand_neighbor_chunks(organization_id, library_ids, out)
+            out = expand_neighbor_chunks(organization_id, library_ids, out, cross_org=cross_org)
         return out
     except Exception:
         # If RPC isn't installed (or pgvector can't serialize), fall back to keyword search.
         query_text = os.getenv("CHAT_LAST_QUERY_TEXT", "")  # optional hook
         if query_text:
-            return keyword_search_chunks(organization_id, library_ids, query_text, top_k=top_k)
+            return keyword_search_chunks(organization_id, library_ids, query_text, top_k=top_k, cross_org=cross_org)
         return []
 
 
 def expand_neighbor_chunks(
-    organization_id: str,
+    organization_id: Optional[str],
     library_ids: List[str],
     rows: List[Dict[str, Any]],
     window: int = 1,
     max_add: int = 8,
+    cross_org: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Expand retrieval with adjacent chunk_ids for the same doc when chunk_id follows:
@@ -286,14 +304,13 @@ def expand_neighbor_chunks(
         return rows
 
     try:
-        res = (
+        q = (
             supabase.table("chunk_embeddings")
             .select("chunk_id, doc_id, library_id, page_start, page_end, text, embedding_text")
-            .eq("organization_id", organization_id)
-            .in_("library_id", library_ids)
-            .in_("chunk_id", want)
-            .execute()
         )
+        if not cross_org and organization_id:
+            q = q.eq("organization_id", organization_id)
+        res = q.in_("library_id", library_ids).in_("chunk_id", want).execute()
         extra = []
         for r in (res.data or []):
             if not isinstance(r, dict):

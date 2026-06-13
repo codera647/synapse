@@ -65,6 +65,8 @@ class ChatRequest(BaseModel):
     top_k: int = 12
     # Reasoning depth: "low" (fast single-pass), "medium" (balanced), "high" (max accuracy).
     thinking_mode: Optional[str] = None
+    # Team chat: pooled libraries may span members' orgs, so retrieve by library_ids only.
+    cross_org: bool = False
     thread_summary: Optional[str] = None
     history: Optional[List[Dict[str, str]]] = None
     client_request_id: Optional[str] = None
@@ -413,6 +415,7 @@ def _retrieve_rows(
     top_k: int,
     hop: int,
     worker_ctx: Optional[Dict[str, Any]],
+    cross_org: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Run one retrieval round for a single (sub-)query.
@@ -452,12 +455,12 @@ def _retrieve_rows(
 
     # Inline fallback (no queue tables / workers, or workers returned nothing).
     os.environ["CHAT_LAST_QUERY_TEXT"] = query_text
-    rows = retrieve_chunks(organization_id, library_ids, query_embedding, top_k=top_k)
+    rows = retrieve_chunks(organization_id, library_ids, query_embedding, top_k=top_k, cross_org=cross_org)
     if not rows:
         try:
             from chat_runtime import keyword_search_chunks
 
-            rows = keyword_search_chunks(organization_id, library_ids, query_text, top_k=top_k)
+            rows = keyword_search_chunks(organization_id, library_ids, query_text, top_k=top_k, cross_org=cross_org)
         except Exception:
             rows = []
     return rows
@@ -584,6 +587,8 @@ def _chat_impl(req: ChatRequest):
     # "Complex" queries get the deep treatment (multi-query recall + completeness critic loop);
     # spotlight/simple queries use the fast single-pass path. (Adaptive routing — Loong.)
     complex_query = query_class in {"MULTI_HOP", "COMPARISON", "AGGREGATION", "MULTI_ENTITY"}
+    # Team chat: pooled libraries can span members' orgs → retrieve by library_ids only.
+    cross_org = bool(req.cross_org)
 
     def _ungrounded_payload() -> Dict[str, Any]:
         ans = client.chat.completions.create(
@@ -608,7 +613,8 @@ def _chat_impl(req: ChatRequest):
         return _ungrounded_payload()
 
     # --- Worker context (optional; _retrieve_rows falls back to inline transparently).
-    use_workers = str(os.getenv("CHAT_USE_WORKERS", "1")).strip() not in {"0", "false", "False"}
+    # The retrieval workers are org-scoped, so team (cross-org) chat always uses the inline path.
+    use_workers = str(os.getenv("CHAT_USE_WORKERS", "1")).strip() not in {"0", "false", "False"} and not cross_org
     worker_ctx: Optional[Dict[str, Any]] = None
     chat_job_id: Optional[str] = None
     mark_chat_job_done = None
@@ -652,7 +658,7 @@ def _chat_impl(req: ChatRequest):
             nonlocal hop_counter
             hop_counter += 1
             qv = embed_query(query_text)
-            fetched = _retrieve_rows(org, libs, query_text, qv, k, hop_counter, worker_ctx)
+            fetched = _retrieve_rows(org, libs, query_text, qv, k, hop_counter, worker_ctx, cross_org=cross_org)
             fresh: List[Dict[str, Any]] = []
             for r in fetched:
                 cid = str(r.get("chunk_id") or "")
