@@ -64,6 +64,7 @@ const THINKING_MODE_META: Record<ThinkingMode, { label: string; desc: string }> 
 };
 import ChatMessageSources from "@/components/ChatMessageSources";
 import ChatAnswer, { type ChatVisual, type ChatCitation } from "@/components/ChatAnswer";
+import { AgentStatusLine, AgentStepsTrail } from "@/components/AgentStatus";
 import ContextMeter from "@/components/ContextMeter";
 
 type LibraryLite = {
@@ -169,6 +170,8 @@ type ChatMessage = {
   citations?: ChatCitation[];
   followups?: Array<{ hop: number; query: string }>;
   stage?: string; // live "what the agent is doing" message while generating
+  steps?: string[]; // accumulated distinct stages, for the collapsible activity trail
+  startedAt?: number; // generation start (for the elapsed timer)
   retryText?: string; // for error messages: the user prompt to retry
 };
 
@@ -874,6 +877,9 @@ export default function ChatPanel({
       content: "",
       ts: Date.now(),
       status: "streaming",
+      startedAt: Date.now(),
+      stage: "Thinking",
+      steps: [],
     });
 
     onLog?.({
@@ -913,7 +919,9 @@ export default function ChatPanel({
           signal: ac.signal,
         });
 
-      // Poll the backend for the live "what the agent is doing" stage while it generates.
+      // Poll the backend for the live "what the agent is doing" stage while it generates, and
+      // accumulate each DISTINCT stage into a trail (powers the collapsible "Steps" disclosure).
+      const seenStages: string[] = [];
       const pollStage = async () => {
         try {
           const r = await fetch(`/api/backend/chat/status?rid=${encodeURIComponent(clientRequestId)}`, {
@@ -921,7 +929,11 @@ export default function ChatPanel({
           });
           if (!r.ok) return;
           const j = (await r.json()) as { stage?: string };
-          if (j?.stage) patchMessage(tid, draftId, { stage: String(j.stage) });
+          if (j?.stage) {
+            const s = String(j.stage);
+            if (seenStages[seenStages.length - 1] !== s) seenStages.push(s);
+            patchMessage(tid, draftId, { stage: s, steps: [...seenStages] });
+          }
         } catch {
           /* ignore */
         }
@@ -1413,10 +1425,7 @@ export default function ChatPanel({
                           </div>
                         </div>
                       ) : m.status === "streaming" && (m.content || "").trim().length === 0 ? (
-                        <div className="flex items-center gap-2.5">
-                          <FiZap className="h-3.5 w-3.5 shrink-0 animate-pulse text-violet-300" />
-                          <span className="text-xs text-white/55">{m.stage || "Thinking"}</span>
-                        </div>
+                        <AgentStatusLine stage={m.stage || "Thinking"} startedAt={m.startedAt} steps={m.steps} />
                       ) : (
                         <div className="rounded-2xl rounded-tl-md glass px-4 py-3">
                           <ChatAnswer content={m.content} visuals={m.visuals} citations={m.citations} />
@@ -1426,11 +1435,7 @@ export default function ChatPanel({
                           {(m.sources?.length || 0) > 0 ? (
                             <ChatMessageSources sources={m.sources || []} onClickSource={(s) => void openSourcePdf(s)} />
                           ) : null}
-                          {(m.followups?.length || 0) > 0 ? (
-                            <div className="mt-2 text-[11px] text-white/40">
-                              Agent hops: {m.followups!.map((f) => `#${f.hop}`).join(", ")}
-                            </div>
-                          ) : null}
+                          {m.status !== "typing" ? <AgentStepsTrail steps={m.steps} /> : null}
                         </div>
                       )}
 
