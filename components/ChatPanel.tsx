@@ -70,9 +70,25 @@ type LibraryLite = {
   id: string;
   name: string;
   pipeline_status?: string | null;
+  status?: string | null;
   pipeline_progress_percent?: number | null;
   ownerLabel?: string | null; // team mode: "by Alice" / "by you"
 };
+
+// A library is chat-ready when preprocessing finished. We mirror the dashboard's own
+// "done" notion (`pipeline_status || status`, plus 100% progress) instead of requiring
+// pipeline_status === "completed" specifically — some libraries record completion in the
+// older `status` column while pipeline_status stays null, which used to hide them from chat.
+export function isLibraryReady(l: {
+  pipeline_status?: string | null;
+  status?: string | null;
+  pipeline_progress_percent?: number | null;
+}): boolean {
+  const s = (l.pipeline_status || l.status || "").toLowerCase();
+  if (s === "completed" || s === "complete" || s === "ready" || s === "done") return true;
+  if ((l.pipeline_progress_percent ?? 0) >= 100) return true;
+  return false;
+}
 
 type OrgLite = { id: string; name: string };
 
@@ -248,9 +264,7 @@ export default function ChatPanel({
 
   // Only expose libraries that are fully processed.
   const readyLibraries = useMemo(() => {
-    return libraries
-      .filter((l) => (l.pipeline_status ?? "").toLowerCase() === "completed")
-      .sort((a, b) => a.name.localeCompare(b.name));
+    return libraries.filter(isLibraryReady).sort((a, b) => a.name.localeCompare(b.name));
   }, [libraries]);
 
   const activeMessages = useMemo(() => {

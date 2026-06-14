@@ -3,10 +3,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FiUser, FiUsers, FiChevronDown, FiCheck } from "react-icons/fi";
-import ChatPanel from "@/components/ChatPanel";
+import ChatPanel, { isLibraryReady } from "@/components/ChatPanel";
 
 type OrgLite = { id: string; name: string };
-type LibraryLite = { id: string; name: string; pipeline_status?: string | null; ownerLabel?: string | null };
+type LibraryLite = {
+  id: string;
+  name: string;
+  pipeline_status?: string | null;
+  status?: string | null;
+  pipeline_progress_percent?: number | null;
+  ownerLabel?: string | null;
+};
 type TeamOrg = { id: string; name: string; role: string };
 
 export type ChatSource = {
@@ -94,7 +101,7 @@ export default function ChatWorkspace({
 
     const { data: libs } = await supabase
       .from("libraries")
-      .select("id, name, pipeline_status")
+      .select("id, name, pipeline_status, status, pipeline_progress_percent")
       .eq("created_by_user_id", uid)
       .order("created_at", { ascending: false });
 
@@ -106,6 +113,8 @@ export default function ChatWorkspace({
         id: String(l.id),
         name: String(l.name || "Library"),
         pipeline_status: (l.pipeline_status as string | null) ?? null,
+        status: (l.status as string | null) ?? null,
+        pipeline_progress_percent: (l.pipeline_progress_percent as number | null) ?? null,
       })),
     );
     setSelectedTeamId((prev) => (prev && realTeams.some((t) => t.id === prev) ? prev : realTeams[0]?.id ?? null));
@@ -163,11 +172,25 @@ export default function ChatWorkspace({
         setTeamLibraries([]);
         return;
       }
-      const { data: libs } = await supabase
+      const { data: libs, error: libErr } = await supabase
         .from("libraries")
-        .select("id, name, pipeline_status, created_by_user_id")
+        .select("id, name, pipeline_status, status, pipeline_progress_percent, created_by_user_id")
         .in("id", ids);
       const rows = (libs as Array<Record<string, unknown>>) || [];
+      // DIAGNOSTIC step 2: did the shared library row come back, and what is its status?
+      setTeamDebug(
+        `${dbg} | libs fetched: ${rows.length}` +
+          (rows.length
+            ? ` → ${rows
+                .map(
+                  (l) =>
+                    `"${l.name}" pipeline=${l.pipeline_status ?? "null"} status=${l.status ?? "null"} pct=${l.pipeline_progress_percent ?? "null"}`,
+                )
+                .join(", ")}`
+            : libErr
+              ? ` (read error: ${libErr.message || libErr.code})`
+              : ` (library_id ${ids.map((i) => i.slice(0, 8)).join(",")} not found in libraries)`),
+      );
       onLog?.({
         level: "info",
         message: `Team chat: ${rows.length} shared library(ies) loaded`,
@@ -192,6 +215,8 @@ export default function ChatWorkspace({
             id: String(l.id),
             name: String(l.name || "Library"),
             pipeline_status: (l.pipeline_status as string | null) ?? null,
+            status: (l.status as string | null) ?? null,
+            pipeline_progress_percent: (l.pipeline_progress_percent as number | null) ?? null,
             ownerLabel: label,
           };
         }),
@@ -216,7 +241,7 @@ export default function ChatWorkspace({
   const effectiveLibraries = scope === "team" ? teamLibraries : myLibraries;
 
   const readyLibraries = useMemo(
-    () => effectiveLibraries.filter((l) => (l.pipeline_status ?? "").toLowerCase() === "completed"),
+    () => effectiveLibraries.filter(isLibraryReady),
     [effectiveLibraries],
   );
 
@@ -226,7 +251,7 @@ export default function ChatWorkspace({
     if (scope !== "team") return [];
     const already = new Set(teamLibraries.map((l) => l.id));
     return myLibraries.filter(
-      (l) => (l.pipeline_status ?? "").toLowerCase() === "completed" && !already.has(l.id),
+      (l) => isLibraryReady(l) && !already.has(l.id),
     );
   }, [scope, myLibraries, teamLibraries]);
 
