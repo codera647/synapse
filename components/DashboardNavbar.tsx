@@ -7,7 +7,6 @@ import {
     FiChevronDown,
     FiBell,
     FiHelpCircle,
-    FiSearch,
     FiCheck,
     FiPlus,
     FiUser,
@@ -38,7 +37,6 @@ export default function DashboardNavbar({
     const router = useRouter();
     const [openOrgMenu, setOpenOrgMenu] = useState(false);
     const [openProfileMenu, setOpenProfileMenu] = useState(false);
-    const [showAllOrgs, setShowAllOrgs] = useState(false);
 
     const orgMenuRef = useRef<HTMLDivElement | null>(null);
     const profileMenuRef = useRef<HTMLDivElement | null>(null);
@@ -93,58 +91,36 @@ export default function DashboardNavbar({
 
                 {openOrgMenu && (
                     <div className="absolute top-12 left-0 w-72 rounded-2xl surface-menu overflow-hidden z-[60]">
-                        <div className="flex items-center px-3 py-2.5 border-b border-white/8">
-                            <FiSearch className="w-4 h-4 text-white/40 mr-2" />
-                            <input
-                                placeholder="Find organization..."
-                                className="bg-transparent outline-none border-none text-xs text-white/90 placeholder:text-white/40 w-full"
-                            />
+                        <div className="px-3 pt-2.5 pb-1 text-[10px] uppercase tracking-wide text-white/35">
+                            Organizations & teams
                         </div>
-
-                        <div className="p-1.5">
-                            <button className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm bg-white/5 text-white/90">
-                                <span className="truncate">{displayName}</span>
-                                <FiCheck className="w-4 h-4 text-violet-300 shrink-0" />
-                            </button>
-
-                            <button
-                                className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-white/70 hover:bg-white/8 transition-colors"
-                                onClick={() => setShowAllOrgs((v) => !v)}
-                            >
-                                All organizations
-                            </button>
-
-                            {showAllOrgs && (
-                                <div className="mt-1 max-h-52 overflow-auto synapse-scroll">
-                                    {organizations.length === 0 ? (
-                                        <div className="px-3 py-2.5 text-xs text-white/40">No organizations found.</div>
-                                    ) : (
-                                        organizations.map((org) => (
-                                            <button
-                                                key={org.id}
-                                                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
-                                                    org.id === currentOrgId ? "text-white/90 bg-white/5" : "text-white/65 hover:bg-white/8"
-                                                }`}
-                                                onClick={() => {
-                                                    if (org.id !== currentOrgId) onSelectOrg?.(org.id);
-                                                    setOpenOrgMenu(false);
-                                                    setShowAllOrgs(false);
-                                                }}
-                                            >
-                                                <span className="truncate">{org.name}</span>
-                                                {org.id === currentOrgId && <FiCheck className="w-4 h-4 text-violet-300 shrink-0" />}
-                                            </button>
-                                        ))
-                                    )}
-                                </div>
+                        <div className="max-h-64 overflow-auto synapse-scroll p-1.5 pt-0.5">
+                            {organizations.length === 0 ? (
+                                <div className="px-3 py-2.5 text-xs text-white/40">No organizations found.</div>
+                            ) : (
+                                organizations.map((org) => (
+                                    <button
+                                        key={org.id}
+                                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                                            org.id === currentOrgId ? "bg-white/8 text-white/90" : "text-white/65 hover:bg-white/8"
+                                        }`}
+                                        onClick={() => {
+                                            if (org.id !== currentOrgId) onSelectOrg?.(org.id);
+                                            setOpenOrgMenu(false);
+                                        }}
+                                    >
+                                        <span className="truncate">{org.name}</span>
+                                        {org.id === currentOrgId && <FiCheck className="w-4 h-4 text-violet-300 shrink-0" />}
+                                    </button>
+                                ))
                             )}
-
-                            <div className="my-1 h-px bg-white/8" />
+                        </div>
+                        <div className="h-px bg-white/8" />
+                        <div className="p-1.5">
                             <button
                                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-white/80 hover:bg-white/8 transition-colors"
                                 onClick={() => {
                                     setOpenOrgMenu(false);
-                                    setShowAllOrgs(false);
                                     router.push("/new-organization");
                                 }}
                             >

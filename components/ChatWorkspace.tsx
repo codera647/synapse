@@ -42,25 +42,43 @@ export default function ChatWorkspace({
     }
     let alive = true;
     (async () => {
-      const { data, error } = await supabase
+      // Two-step (no embedded join): get the shared library ids, then fetch those libraries. This
+      // works regardless of the PostgREST relationship cache and across orgs (libraries are not
+      // org-scoped by RLS).
+      const { data: shares, error: shErr } = await supabase
         .from("team_library_shares")
-        .select("library_id, libraries(id, name, pipeline_status)")
+        .select("library_id")
         .eq("organization_id", organization.id);
       if (!alive) return;
-      if (error) {
-        onLog?.({ level: "warn", message: "Team chat: failed to load shared libraries", details: error });
+      if (shErr) {
+        onLog?.({ level: "warn", message: "Team chat: failed to load shares", details: shErr });
         setTeamLibraries([]);
         return;
       }
-      const libs = ((data as unknown as Array<{ libraries: unknown }>) || [])
-        .map((r) => (Array.isArray(r.libraries) ? r.libraries[0] : r.libraries) as Record<string, unknown> | null)
-        .filter(Boolean)
-        .map((l) => ({
-          id: String((l as Record<string, unknown>).id),
-          name: String((l as Record<string, unknown>).name || "Library"),
-          pipeline_status: ((l as Record<string, unknown>).pipeline_status as string | null) ?? null,
-        }));
-      setTeamLibraries(libs);
+      const libIds = ((shares as Array<{ library_id?: string }>) || [])
+        .map((s) => String(s.library_id || ""))
+        .filter(Boolean);
+      if (libIds.length === 0) {
+        setTeamLibraries([]);
+        return;
+      }
+      const { data: libs, error: libErr } = await supabase
+        .from("libraries")
+        .select("id, name, pipeline_status")
+        .in("id", libIds);
+      if (!alive) return;
+      if (libErr) {
+        onLog?.({ level: "warn", message: "Team chat: failed to load shared libraries", details: libErr });
+        setTeamLibraries([]);
+        return;
+      }
+      setTeamLibraries(
+        ((libs as Array<Record<string, unknown>>) || []).map((l) => ({
+          id: String(l.id),
+          name: String(l.name || "Library"),
+          pipeline_status: (l.pipeline_status as string | null) ?? null,
+        })),
+      );
     })();
     return () => {
       alive = false;
