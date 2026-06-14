@@ -86,28 +86,37 @@ export default function SettingsModal({
     setLoading(true);
     try {
       const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-      setUserId(user.id);
-      setEmail(user.email ?? "");
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) return;
 
-      const [{ data: profile }, { data: pref }] = await Promise.all([
-        supabase.from("users").select("name, avatar_url").eq("id", user.id).maybeSingle(),
-        supabase.from("user_preferences").select("*").eq("user_id", user.id).maybeSingle(),
-      ]);
-
-      setName(String(profile?.name || user.user_metadata?.full_name || ""));
-      setAvatarUrl((profile?.avatar_url as string | null) ?? null);
+      const res = await fetch("/api/user/preferences", {
+        headers: { authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("load-failed");
+      const d = (await res.json()) as {
+        user_id?: string;
+        email?: string | null;
+        name?: string | null;
+        avatar_url?: string | null;
+        prefs?: Record<string, unknown> | null;
+      };
+      const pref = d.prefs || {};
+      setUserId(d.user_id ?? session?.user?.id ?? null);
+      setEmail(d.email ?? session?.user?.email ?? "");
+      setName(String(d.name || session?.user?.user_metadata?.full_name || ""));
+      setAvatarUrl(d.avatar_url ?? null);
       setPrefs({
-        nickname: pref?.nickname ?? "",
-        occupation: pref?.occupation ?? "",
-        about_me: pref?.about_me ?? "",
-        base_tone: pref?.base_tone ?? "default",
-        char_warmth: pref?.char_warmth ?? "default",
-        char_enthusiasm: pref?.char_enthusiasm ?? "default",
-        char_headers_lists: pref?.char_headers_lists ?? "default",
-        char_emoji: pref?.char_emoji ?? "default",
+        nickname: (pref.nickname as string) ?? "",
+        occupation: (pref.occupation as string) ?? "",
+        about_me: (pref.about_me as string) ?? "",
+        base_tone: (pref.base_tone as string) ?? "default",
+        char_warmth: (pref.char_warmth as string) ?? "default",
+        char_enthusiasm: (pref.char_enthusiasm as string) ?? "default",
+        char_headers_lists: (pref.char_headers_lists as string) ?? "default",
+        char_emoji: (pref.char_emoji as string) ?? "default",
       });
     } catch {
       flash("err", "Couldn't load your settings.");
@@ -188,14 +197,22 @@ export default function SettingsModal({
         char_emoji: prefs.char_emoji || "default",
       };
 
-      const [{ error: uErr }, { error: pErr }] = await Promise.all([
-        supabase.from("users").update({ name: cleanName, avatar_url: cleanAvatar }).eq("id", userId),
-        supabase
-          .from("user_preferences")
-          .upsert({ user_id: userId, ...prefsRow, updated_at: new Date().toISOString() }, { onConflict: "user_id" }),
-      ]);
-      if (uErr) throw uErr;
-      if (pErr) throw pErr;
+      // Save via a server route (service role) so the write never trips browser RLS for these tables.
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error("no-session");
+
+      const res = await fetch("/api/user/preferences", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: cleanName, avatar_url: cleanAvatar, prefs: prefsRow }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || "save-failed");
+      }
 
       onSaved?.(prefsRow, { name: cleanName, avatarUrl: cleanAvatar });
       flash("ok", "Settings saved.");

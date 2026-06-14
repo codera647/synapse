@@ -131,13 +131,23 @@ function DashboardPageInner() {
             setUserEmail(user.email ?? null);
 
             // Load profile avatar + personalization (used by the navbar + to personalize chat).
+            // Via the server route so it doesn't depend on user_preferences RLS.
             void (async () => {
-                const [{ data: profile }, { data: pref }] = await Promise.all([
-                    supabase.from("users").select("avatar_url").eq("id", user.id).maybeSingle(),
-                    supabase.from("user_preferences").select("*").eq("user_id", user.id).maybeSingle(),
-                ]);
-                setAvatarUrl((profile?.avatar_url as string | null) ?? null);
-                if (pref) setPersonalization(pref as Personalization);
+                try {
+                    const { data: { session } } = await supabase.auth.getSession();
+                    const token = session?.access_token;
+                    if (!token) return;
+                    const res = await fetch("/api/user/preferences", {
+                        headers: { authorization: `Bearer ${token}` },
+                        cache: "no-store",
+                    });
+                    if (!res.ok) return;
+                    const d = (await res.json()) as { avatar_url?: string | null; prefs?: Personalization | null };
+                    setAvatarUrl(d.avatar_url ?? null);
+                    if (d.prefs) setPersonalization(d.prefs);
+                } catch {
+                    /* non-fatal */
+                }
             })();
 
             // Fetch user's organization memberships
