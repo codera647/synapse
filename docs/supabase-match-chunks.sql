@@ -27,18 +27,20 @@ returns table (
 language sql
 stable
 as $$
+  -- Casts make this robust whether chunk_embeddings stores ids as text or uuid (some columns,
+  -- e.g. organization_id, are stored as text in this DB). Comparisons cast both sides to text.
   select
-    ce.chunk_id,
-    ce.organization_id,
-    ce.library_id,
-    ce.doc_id,
-    ce.page_start,
-    ce.page_end,
-    coalesce(ce.embedding_text, ce.text) as text,
-    (1 - (ce.embedding <=> p_query_embedding))::float as score
+    ce.chunk_id::text,
+    ce.organization_id::uuid,
+    ce.library_id::uuid,
+    ce.doc_id::uuid,
+    ce.page_start::int,
+    ce.page_end::int,
+    coalesce(ce.embedding_text, ce.text)::text,
+    (1 - (ce.embedding <=> p_query_embedding))::float
   from public.chunk_embeddings ce
-  where ce.organization_id = p_organization_id
-    and ce.library_id = any(p_library_ids)
+  where ce.organization_id::text = p_organization_id::text
+    and ce.library_id::text = any(p_library_ids::text[])
   order by ce.embedding <=> p_query_embedding asc
   limit greatest(1, p_match_count);
 $$;

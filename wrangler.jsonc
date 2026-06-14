@@ -16,6 +16,12 @@
     "enabled": true
   },
 
+  // Cloudflare Email Service binding for transactional team-invitation emails.
+  // Requires onboarding a real domain first: `npx wrangler email sending enable <yourdomain>`
+  // (sets up DKIM/SPF). Then set the Worker var TEAM_INVITE_FROM=invites@<yourdomain>.
+  // Until then the binding is unused and invites stay in-app only (graceful fallback).
+  "send_email": [{ "name": "EMAIL" }],
+
   // Manage runtime env vars + secrets from the Cloudflare dashboard.
   // keep_vars stops `wrangler deploy` from wiping dashboard-set vars/secrets
   // that aren't declared in this file.

@@ -23,17 +23,19 @@ returns table (
 language sql
 stable
 as $$
+  -- Cast each column to the declared return type. In this DB some id columns are stored as text,
+  -- so the explicit casts keep the function's output matching its signature.
   select
-    ce.chunk_id,
-    ce.organization_id,
-    ce.library_id,
-    ce.doc_id,
-    ce.page_start,
-    ce.page_end,
-    coalesce(ce.embedding_text, ce.text) as text,
-    (1 - (ce.embedding <=> p_query_embedding))::float as score
+    ce.chunk_id::text,
+    ce.organization_id::uuid,
+    ce.library_id::uuid,
+    ce.doc_id::uuid,
+    ce.page_start::int,
+    ce.page_end::int,
+    coalesce(ce.embedding_text, ce.text)::text,
+    (1 - (ce.embedding <=> p_query_embedding))::float
   from public.chunk_embeddings ce
-  where ce.library_id = any(p_library_ids)
+  where ce.library_id::text = any(p_library_ids::text[])
   order by ce.embedding <=> p_query_embedding asc
   limit greatest(1, p_match_count);
 $$;

@@ -17,7 +17,7 @@ import {
 type OrgLite = { id: string; name: string };
 type Member = { userId: string; role: string; email: string; name: string | null; avatarUrl: string | null };
 type SentInvite = { id: string; email: string; role: string; createdAt: string };
-type MyInvite = { id: string; orgId: string; orgName: string; role: string; invitedBy: string | null };
+type MyInvite = { id: string; orgId: string; orgName: string; role: string; invitedBy: string | null; token: string };
 type SharedLib = { shareId: string; libraryId: string; name: string; ownerId: string | null };
 type MyLib = { id: string; name: string; pipelineStatus: string | null };
 
@@ -71,7 +71,7 @@ export default function TeamWorkspace({
       // Invitations addressed to me (across all orgs) — so an invitee sees them anywhere.
       const invP = supabase
         .from("organization_invitations")
-        .select("id, organization_id, role, invited_by_user_id, organizations(name)")
+        .select("id, organization_id, role, invited_by_user_id, token, organizations(name)")
         .eq("email", email)
         .eq("status", "pending");
 
@@ -114,6 +114,7 @@ export default function TeamWorkspace({
             orgName: String(org?.name || "a team"),
             role: String(r.role || "member"),
             invitedBy: r.invited_by_user_id ? String(r.invited_by_user_id) : null,
+            token: String(r.token || ""),
           };
         }),
       );
@@ -187,23 +188,32 @@ export default function TeamWorkspace({
     }
     setBusy(true);
     try {
-      const token =
-        typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random()}`;
-      const { error } = await supabase.from("organization_invitations").insert({
-        organization_id: organization.id,
-        email,
-        invited_by_user_id: me.id,
-        role: "member",
-        token,
-        status: "pending",
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) {
+        flash("err", "Please sign in again.");
+        return;
+      }
+      const res = await fetch("/api/team/invite", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ organization_id: organization.id, email }),
       });
-      if (error) throw error;
+      const j = (await res.json().catch(() => ({}))) as { error?: string; emailed?: boolean };
+      if (!res.ok) {
+        flash("err", String(j?.error || "Couldn't send the invite."));
+        return;
+      }
       setInviteEmail("");
-      flash("ok", `Invitation sent to ${email}. They'll see it when they sign in.`);
+      flash(
+        "ok",
+        j.emailed ? `Invitation emailed to ${email}.` : `${email} invited — they'll see it in Team when they sign in.`,
+      );
       await load();
     } catch (err) {
       onLog?.({ level: "error", message: "Team: invite failed", details: err });
-      flash("err", "Couldn't send the invite (maybe already invited).");
+      flash("err", "Couldn't send the invite.");
     } finally {
       setBusy(false);
     }
@@ -219,36 +229,38 @@ export default function TeamWorkspace({
     }
   };
 
-  const acceptInvite = async (inv: MyInvite) => {
-    if (!me) return;
+  const respondInvite = async (inv: MyInvite, action: "accept" | "decline") => {
     setBusy(true);
     try {
-      const { error: mErr } = await supabase.from("organization_members").insert({
-        organization_id: inv.orgId,
-        user_id: me.id,
-        role: inv.role || "member",
-        invited_by_user_id: inv.invitedBy,
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) {
+        flash("err", "Please sign in again.");
+        setBusy(false);
+        return;
+      }
+      const res = await fetch("/api/team/accept", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ token: inv.token, action }),
       });
-      if (mErr && !String(mErr.message || "").toLowerCase().includes("duplicate")) throw mErr;
-      await supabase
-        .from("organization_invitations")
-        .update({ status: "accepted", accepted_by_user_id: me.id, accepted_at: new Date().toISOString() })
-        .eq("id", inv.id);
-      flash("ok", `You joined ${inv.orgName}. Reloading…`);
-      window.setTimeout(() => window.location.reload(), 800);
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        flash("err", String(j?.error || "Couldn't update the invitation."));
+        setBusy(false);
+        return;
+      }
+      if (action === "accept") {
+        flash("ok", `You joined ${inv.orgName}. Reloading…`);
+        window.setTimeout(() => window.location.reload(), 800);
+      } else {
+        await load();
+        setBusy(false);
+      }
     } catch (err) {
-      onLog?.({ level: "error", message: "Team: accept failed", details: err });
-      flash("err", "Couldn't accept the invitation.");
-      setBusy(false);
-    }
-  };
-
-  const declineInvite = async (id: string) => {
-    setBusy(true);
-    try {
-      await supabase.from("organization_invitations").update({ status: "revoked" }).eq("id", id);
-      await load();
-    } finally {
+      onLog?.({ level: "error", message: "Team: respond failed", details: err });
+      flash("err", "Couldn't update the invitation.");
       setBusy(false);
     }
   };
@@ -340,7 +352,7 @@ export default function TeamWorkspace({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => void acceptInvite(inv)}
+                    onClick={() => void respondInvite(inv, "accept")}
                     className="inline-flex items-center gap-1.5 rounded-lg btn-grad px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
                   >
                     <FiCheck className="h-3.5 w-3.5" /> Accept
@@ -348,7 +360,7 @@ export default function TeamWorkspace({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => void declineInvite(inv.id)}
+                    onClick={() => void respondInvite(inv, "decline")}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 hover:bg-white/10 disabled:opacity-60"
                   >
                     <FiX className="h-3.5 w-3.5" /> Decline
