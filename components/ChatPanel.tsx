@@ -20,6 +20,7 @@ import {
   FiZap,
   FiAlertTriangle,
   FiRefreshCw,
+  FiShare2,
 } from "react-icons/fi";
 
 /** Map any chat failure (HTTP status + payload) to a short, friendly user message.
@@ -193,6 +194,9 @@ export default function ChatPanel({
   onSources,
   onLog,
   scope = "personal",
+  shareableLibraries = [],
+  onShareLibrary,
+  sharingLibraryId = null,
 }: {
   supabase: SupabaseClient;
   organization: OrgLite | null;
@@ -204,6 +208,10 @@ export default function ChatPanel({
   // "personal" = your private chats over your libraries; "team" = shared chats over the team's
   // pooled (cross-org) libraries.
   scope?: "personal" | "team";
+  // Team mode: your own processed libraries you can share into the team, right from the + picker.
+  shareableLibraries?: LibraryLite[];
+  onShareLibrary?: (libraryId: string) => void;
+  sharingLibraryId?: string | null;
 }) {
   const isTeam = scope === "team";
   const abortRef = useRef<AbortController | null>(null);
@@ -1473,7 +1481,11 @@ export default function ChatPanel({
               </div>
               <div className="max-h-64 overflow-auto synapse-scroll p-1.5">
                 {readyLibraries.length === 0 ? (
-                  <div className="px-3 py-4 text-sm text-white/45">No processed libraries yet.</div>
+                  <div className="px-3 py-4 text-sm text-white/45">
+                    {isTeam
+                      ? "No libraries shared with this team yet."
+                      : "No processed libraries yet."}
+                  </div>
                 ) : (
                   readyLibraries.map((l) => {
                     const checked = selectedSet.has(l.id);
@@ -1498,9 +1510,45 @@ export default function ChatPanel({
                     );
                   })
                 )}
+
+                {/* Team mode: share your own processed libraries into this team, right here. */}
+                {isTeam && shareableLibraries.length > 0 ? (
+                  <div className="mt-1.5 border-t border-white/10 pt-2">
+                    <div className="px-3 pb-1 text-[10px] uppercase tracking-[0.18em] text-white/35">
+                      Share your library with this team
+                    </div>
+                    {shareableLibraries.map((l) => {
+                      const sharing = sharingLibraryId === l.id;
+                      return (
+                        <button
+                          key={l.id}
+                          type="button"
+                          disabled={sharing || !onShareLibrary}
+                          onClick={() => onShareLibrary?.(l.id)}
+                          className="w-full flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-sm text-white/70 hover:bg-white/6 transition-colors disabled:opacity-60"
+                        >
+                          <span className="min-w-0 flex items-center gap-2">
+                            <FiBookOpen className="h-3.5 w-3.5 shrink-0 text-white/35" />
+                            <span className="truncate">{l.name}</span>
+                          </span>
+                          <span className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-medium text-violet-300">
+                            {sharing ? (
+                              <span className="h-3.5 w-3.5 rounded-full border-2 border-violet-300/40 border-t-violet-300 animate-spin" />
+                            ) : (
+                              <FiShare2 className="h-3.5 w-3.5" />
+                            )}
+                            {sharing ? "Sharing…" : "Share"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
               <div className="border-t border-white/10 px-4 py-2 text-[11px] text-white/40">
-                Pick multiple libraries to broaden context.
+                {isTeam
+                  ? "Shared libraries are visible to everyone on the team."
+                  : "Pick multiple libraries to broaden context."}
               </div>
             </div>
           ) : null}

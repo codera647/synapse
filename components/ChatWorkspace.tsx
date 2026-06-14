@@ -47,6 +47,8 @@ export default function ChatWorkspace({
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [teamLibraries, setTeamLibraries] = useState<LibraryLite[]>([]);
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
+  const [teamRefresh, setTeamRefresh] = useState(0);
+  const [sharingId, setSharingId] = useState<string | null>(null);
 
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
   const teamMenuRef = useRef<HTMLDivElement | null>(null);
@@ -179,7 +181,7 @@ export default function ChatWorkspace({
     return () => {
       alive = false;
     };
-  }, [scope, selectedTeamId, supabase, me, onLog]);
+  }, [scope, selectedTeamId, supabase, me, onLog, teamRefresh]);
 
   // Close the team menu on outside click.
   useEffect(() => {
@@ -197,6 +199,39 @@ export default function ChatWorkspace({
   const readyLibraries = useMemo(
     () => effectiveLibraries.filter((l) => (l.pipeline_status ?? "").toLowerCase() === "completed"),
     [effectiveLibraries],
+  );
+
+  // Your own processed libraries that aren't yet shared into the selected team —
+  // shown in the team `+` picker so you can share them right here (no Team-screen round-trip).
+  const shareableLibraries = useMemo(() => {
+    if (scope !== "team") return [];
+    const already = new Set(teamLibraries.map((l) => l.id));
+    return myLibraries.filter(
+      (l) => (l.pipeline_status ?? "").toLowerCase() === "completed" && !already.has(l.id),
+    );
+  }, [scope, myLibraries, teamLibraries]);
+
+  const shareToTeam = useCallback(
+    async (libraryId: string) => {
+      if (scope !== "team" || !selectedTeamId || !me) return;
+      setSharingId(libraryId);
+      try {
+        const { error } = await supabase.from("team_library_shares").insert({
+          organization_id: selectedTeamId,
+          library_id: libraryId,
+          shared_by_user_id: me,
+        });
+        if (error) {
+          onLog?.({ level: "error", message: "Couldn't share that library with the team", details: error });
+          return;
+        }
+        onLog?.({ level: "success", message: "Library shared with the team" });
+        setTeamRefresh((k) => k + 1);
+      } finally {
+        setSharingId(null);
+      }
+    },
+    [scope, selectedTeamId, me, supabase, onLog],
   );
   const validSelected = useMemo(() => {
     const ids = new Set(readyLibraries.map((l) => l.id));
@@ -286,6 +321,9 @@ export default function ChatWorkspace({
             onChangeSelectedLibraryIds={setSelectedLibraryIds}
             onLog={onLog}
             scope={scope}
+            shareableLibraries={shareableLibraries}
+            onShareLibrary={shareToTeam}
+            sharingLibraryId={sharingId}
           />
         )}
       </div>
