@@ -1259,7 +1259,7 @@ function DashboardPageInner() {
                                         <div className="mt-2 flex items-center gap-3">
 	                                            {getStatusBadge(getPipelineStatus(lib))}
 	                                            <div className="flex items-center gap-2">
-	                                                <div className="h-1.5 w-40 rounded-full bg-white/10 overflow-hidden">
+	                                                <div className="h-2 w-48 rounded-full bg-white/[0.07] overflow-hidden ring-1 ring-inset ring-white/[0.06]">
 	                                                    <div
 	                                                        className={`h-full rounded-full transition-all duration-500 ${getPipelineStatus(lib) === "completed"
 	                                                                ? "bg-emerald-500"

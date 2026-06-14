@@ -247,16 +247,34 @@ export default function LibraryDrawer({ open, onClose, library, organizationId, 
             </div>
           ) : null}
 
-          <div className="mt-5 h-2 w-full overflow-hidden rounded-full bg-white/8">
-            <div
-              className="h-full rounded-full"
-              style={{
-                width: `${pct(library.pipeline_progress_percent)}%`,
-                background:
-                  "linear-gradient(90deg, rgba(184,127,217,0.95) 0%, rgba(136,74,180,0.92) 55%, rgba(59,130,246,0.65) 100%)",
-                boxShadow: "0 0 0 1px rgba(255,255,255,0.06) inset",
-              }}
-            />
+          <div className="mt-5 flex items-center gap-3">
+            <div className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-white/[0.07] ring-1 ring-inset ring-white/[0.06]">
+              <div
+                className={`h-full rounded-full transition-all duration-700 ease-out ${
+                  (library.pipeline_status || "") !== "completed" && (library.pipeline_status || "") !== "failed"
+                    ? "shimmer"
+                    : ""
+                }`}
+                style={{
+                  width: `${pct(library.pipeline_progress_percent)}%`,
+                  background:
+                    (library.pipeline_status || "") === "completed"
+                      ? "linear-gradient(90deg, #34d399, #2dd4bf)"
+                      : (library.pipeline_status || "") === "failed"
+                        ? "linear-gradient(90deg, #f43f5e, #fb7185)"
+                        : "linear-gradient(90deg, rgba(184,127,217,0.95) 0%, rgba(217,70,239,0.9) 55%, rgba(139,92,246,0.9) 100%)",
+                  boxShadow:
+                    (library.pipeline_status || "") === "completed"
+                      ? "0 0 14px rgba(52,211,153,0.45)"
+                      : (library.pipeline_status || "") === "failed"
+                        ? "0 0 14px rgba(244,63,94,0.4)"
+                        : "0 0 14px rgba(167,139,250,0.5)",
+                }}
+              />
+            </div>
+            <span className="shrink-0 text-sm font-semibold tabular-nums text-white/80">
+              {Math.round(pct(library.pipeline_progress_percent))}%
+            </span>
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-3">

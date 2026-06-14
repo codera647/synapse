@@ -55,6 +55,7 @@ export async function POST(req: Request) {
     const libSlug = slugify(libName);
     const prefix = `org_${orgSlug}_${body.organization_id}/library_${libSlug}_${body.library_id}/`;
     const stagePrefixes = [
+        `raw/${body.organization_id}/${body.library_id}/`,
         `layout/${body.organization_id}/${body.library_id}/`,
         `text/${body.organization_id}/${body.library_id}/`,
         `visuals_manifest/${body.organization_id}/${body.library_id}/`,
@@ -89,49 +90,37 @@ export async function POST(req: Request) {
     await supabase.from("batch_stage_jobs").delete().eq("library_id", body.library_id);
     await supabase.from("library_batches").delete().eq("library_id", body.library_id);
     await supabase.from("processing_jobs").delete().eq("library_id", body.library_id);
+    // The library's Drive source connection (refresh token, folder). Org-level drive_connections
+    // are shared across libraries, so we leave those alone.
+    try { await supabase.from("library_sources").delete().eq("library_id", body.library_id); } catch { /* ignore */ }
 
+    // R2 cleanup is BEST-EFFORT — never block removing the library (and its DB rows + embeddings,
+    // already deleted above) on R2 being reachable. Any failures come back as warnings so leftover
+    // objects can be swept later, but the library always disappears for the user.
     const backend = getBackendBaseUrl();
-    if (!backend) {
-        return NextResponse.json(
-            {
-                error:
-                    "Backend URL not configured. Set RUNPOD_API_URL (server) or NEXT_PUBLIC_RUNPOD_API_URL (dev) so we can delete R2 objects.",
-            },
-            { status: 500 }
+    let r2Warnings: { prefix: string; status: number; body?: string }[] = [];
+    if (backend) {
+        const prefixesToDelete = [prefix, ...stagePrefixes];
+        const deleteResults = await Promise.all(
+            prefixesToDelete.map(async (pfx) => {
+                try {
+                    const res = await fetch(`${backend}/r2/delete-prefix`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ prefix: pfx }),
+                    });
+                    return { prefix: pfx, ok: res.ok, status: res.status, body: res.ok ? "" : (await res.text()).slice(0, 300) };
+                } catch (err) {
+                    return { prefix: pfx, ok: false, status: 0, body: err instanceof Error ? err.message : String(err) };
+                }
+            })
         );
+        r2Warnings = deleteResults.filter((r) => !r.ok).map(({ prefix, status, body }) => ({ prefix, status, body }));
+    } else {
+        r2Warnings = [{ prefix: "*", status: 0, body: "Backend URL not configured; R2 objects were not deleted." }];
     }
 
-    // Delete raw + all derived artifacts from R2.
-    const prefixesToDelete = [prefix, ...stagePrefixes];
-    const deleteResults = await Promise.all(
-        prefixesToDelete.map(async (pfx) => {
-            try {
-                const res = await fetch(`${backend}/r2/delete-prefix`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ prefix: pfx }),
-                });
-                const text = await res.text();
-                return { prefix: pfx, ok: res.ok, status: res.status, body: text.slice(0, 500) };
-            } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                return { prefix: pfx, ok: false, status: 0, body: msg };
-            }
-        })
-    );
-
-    const failedDeletes = deleteResults.filter((r) => !r.ok);
-    if (failedDeletes.length > 0) {
-        return NextResponse.json(
-            {
-                error: "Failed to delete some R2 prefixes. Check backend URL and R2 credentials in Colab.",
-                backend,
-                failed: failedDeletes,
-            },
-            { status: 502 }
-        );
-    }
-
+    // Always remove the library row last (DB rows + embeddings are already gone above).
     const { error } = await supabase
         .from("libraries")
         .delete()
@@ -142,5 +131,5 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, r2_warnings: r2Warnings.length ? r2Warnings : undefined });
 }
