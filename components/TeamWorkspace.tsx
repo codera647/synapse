@@ -132,12 +132,6 @@ export default function TeamWorkspace({
         .order("created_at", { ascending: false });
 
       const orgId = teamId;
-      const memP = orgId
-        ? supabase
-            .from("organization_members")
-            .select("role, user_id, users(id, email, name, avatar_url)")
-            .eq("organization_id", orgId)
-        : Promise.resolve({ data: [], error: null });
       const sentP = orgId
         ? supabase
             .from("organization_invitations")
@@ -152,7 +146,32 @@ export default function TeamWorkspace({
             .eq("organization_id", orgId)
         : Promise.resolve({ data: [], error: null });
 
-      const [inv, myLib, mem, sent, shared] = await Promise.all([invP, myLibP, memP, sentP, sharedP]);
+      const [inv, myLib, sent, shared] = await Promise.all([invP, myLibP, sentP, sharedP]);
+
+      // Members + their profiles come from a server route (service role) so names/emails/avatars
+      // resolve even when users-table RLS would hide teammates or public.users is sparse.
+      if (orgId) {
+        try {
+          const {
+            data: { session },
+          } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (token) {
+            const res = await fetch(`/api/team/members?org=${encodeURIComponent(orgId)}`, {
+              headers: { authorization: `Bearer ${token}` },
+              cache: "no-store",
+            });
+            if (res.ok) {
+              const j = (await res.json()) as { members?: Member[] };
+              setMembers(j.members || []);
+            }
+          }
+        } catch {
+          /* non-fatal */
+        }
+      } else {
+        setMembers([]);
+      }
 
       setMyInvites(
         ((inv.data as unknown as Array<Record<string, unknown>>) || []).map((r) => {
@@ -176,18 +195,6 @@ export default function TeamWorkspace({
         })),
       );
 
-      setMembers(
-        ((mem.data as unknown as Array<Record<string, unknown>>) || []).map((r) => {
-          const u = pickOne(r.users as Record<string, unknown> | Record<string, unknown>[]);
-          return {
-            userId: String(r.user_id),
-            role: String(r.role || "member"),
-            email: String(u?.email || ""),
-            name: u?.name ? String(u.name) : null,
-            avatarUrl: u?.avatar_url ? String(u.avatar_url) : null,
-          };
-        }),
-      );
 
       setSentInvites(
         ((sent.data as unknown as Array<Record<string, unknown>>) || []).map((r) => ({
@@ -506,10 +513,10 @@ export default function TeamWorkspace({
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-white/90">
-                    {m.name || m.email || "Member"}
+                    {m.name || (m.email ? m.email.split("@")[0] : "Member")}
                     {m.userId === me?.id ? <span className="text-white/40"> (you)</span> : null}
                   </div>
-                  <div className="truncate text-[11px] text-white/40">{m.email}</div>
+                  {m.email ? <div className="truncate text-[11px] text-white/40">{m.email}</div> : null}
                 </div>
                 <span
                   className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
