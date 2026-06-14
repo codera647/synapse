@@ -166,6 +166,7 @@ export async function POST(req: Request) {
         );
     }
 
+    try {
     const supabase = createSupabaseAdminClient();
 
     // --- Step 1: Find the refresh token ---
@@ -298,4 +299,18 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ job: data });
+    } catch (err) {
+        // Surface the real cause instead of an opaque 500 (usually a missing Worker env var:
+        // SUPABASE_SERVICE_ROLE_KEY / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / BACKEND_API_URL).
+        console.error("library-sync/start failed:", err);
+        return NextResponse.json(
+            {
+                error:
+                    err instanceof Error
+                        ? `Couldn't start preprocessing: ${err.message}`
+                        : "Unexpected server error starting preprocessing.",
+            },
+            { status: 500 },
+        );
+    }
 }
