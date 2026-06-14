@@ -159,20 +159,26 @@ export default function SettingsModal({
     }
     setUploading(true);
     try {
-      const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "") || "png";
-      const path = `${userId}/avatar.${ext}`;
-      const { error } = await supabase.storage.from("avatars").upload(path, file, {
-        upsert: true,
-        contentType: file.type,
-        cacheControl: "3600",
+      // Upload via the server (service role) — self-heals the bucket, no Storage setup needed.
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error("no-session");
+
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/user/avatar", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: fd,
       });
-      if (error) throw error;
-      const { data: pub } = supabase.storage.from("avatars").getPublicUrl(path);
-      // Cache-bust so the new image shows immediately.
-      setAvatarUrl(`${pub.publicUrl}?v=${Date.now()}`);
+      const j = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (!res.ok || !j.url) throw new Error(j.error || "upload-failed");
+      setAvatarUrl(j.url);
       flash("ok", "Avatar uploaded — remember to Save.");
     } catch {
-      flash("err", "Upload failed. Check the avatars storage bucket exists.");
+      flash("err", "Upload failed. Please try again.");
     } finally {
       setUploading(false);
     }
