@@ -213,6 +213,7 @@ export default function ChatPanel({
   shareableLibraries = [],
   onShareLibrary,
   sharingLibraryId = null,
+  personalization = null,
 }: {
   supabase: SupabaseClient;
   organization: OrgLite | null;
@@ -228,6 +229,8 @@ export default function ChatPanel({
   shareableLibraries?: LibraryLite[];
   onShareLibrary?: (libraryId: string) => void;
   sharingLibraryId?: string | null;
+  // User personalization (identity + tone presets) — sent to the backend to shape answer style.
+  personalization?: Record<string, unknown> | null;
 }) {
   const isTeam = scope === "team";
   const abortRef = useRef<AbortController | null>(null);
@@ -897,6 +900,7 @@ export default function ChatPanel({
             message: userText,
             thinking_mode: thinkingMode,
             cross_org: isTeam,
+            personalization: personalization ?? undefined,
             client_request_id: clientRequestId,
             client_prompt_hash: clientPromptHash,
             // Context window inputs (summary + last few turns).

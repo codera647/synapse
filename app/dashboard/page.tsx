@@ -13,6 +13,7 @@ import { LogProvider, useLog } from "@/context/LogContext";
 import LibraryDrawer from "@/components/LibraryDrawer";
 import ChatWorkspace from "@/components/ChatWorkspace";
 import TeamWorkspace from "@/components/TeamWorkspace";
+import SettingsModal, { type Personalization } from "@/components/SettingsModal";
 
 type Library = {
     id: string;
@@ -63,6 +64,9 @@ function DashboardPageInner() {
     const stageStateRef = useRef<Map<string, Map<string, string>>>(new Map());
 
     const [userEmail, setUserEmail] = useState<string | null>(null);
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+    const [personalization, setPersonalization] = useState<Personalization | null>(null);
     const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
     const [organizations, setOrganizations] = useState<Organization[]>([]);
     const [libraries, setLibraries] = useState<Library[]>([]);
@@ -125,6 +129,16 @@ function DashboardPageInner() {
             }
 
             setUserEmail(user.email ?? null);
+
+            // Load profile avatar + personalization (used by the navbar + to personalize chat).
+            void (async () => {
+                const [{ data: profile }, { data: pref }] = await Promise.all([
+                    supabase.from("users").select("avatar_url").eq("id", user.id).maybeSingle(),
+                    supabase.from("user_preferences").select("*").eq("user_id", user.id).maybeSingle(),
+                ]);
+                setAvatarUrl((profile?.avatar_url as string | null) ?? null);
+                if (pref) setPersonalization(pref as Personalization);
+            })();
 
             // Fetch user's organization memberships
             const { data: memberships, error: memberError } = await supabase
@@ -1003,6 +1017,8 @@ function DashboardPageInner() {
                     currentOrgId={null}
                     onSelectOrg={handleSelectOrg}
                     onOpenHardware={() => setHardwareOpen(true)}
+                    onOpenSettings={() => setSettingsOpen(true)}
+                    avatarUrl={avatarUrl}
                     userEmail={userEmail}
                     onLogout={handleLogout}
                 />
@@ -1043,6 +1059,8 @@ function DashboardPageInner() {
                     currentOrgId={currentOrg?.id ?? null}
                     onSelectOrg={handleSelectOrg}
                     onOpenHardware={() => setHardwareOpen(true)}
+                    onOpenSettings={() => setSettingsOpen(true)}
+                    avatarUrl={avatarUrl}
                     userEmail={userEmail}
                     onLogout={handleLogout}
                 />
@@ -1091,6 +1109,7 @@ function DashboardPageInner() {
                             supabase={supabase}
                             organization={currentOrg ? { id: currentOrg.id, name: currentOrg.name } : null}
                             libraries={libraries}
+                            personalization={personalization}
                             onLog={(e) =>
                                 addLog({
                                     level: e.level,
@@ -1437,6 +1456,17 @@ function DashboardPageInner() {
                 </div>
             )}
 
+
+            <SettingsModal
+                supabase={supabase}
+                open={settingsOpen}
+                onClose={() => setSettingsOpen(false)}
+                onLogout={handleLogout}
+                onSaved={(prefs, profile) => {
+                    setPersonalization(prefs);
+                    setAvatarUrl(profile.avatarUrl);
+                }}
+            />
 
             {hardwareOpen && (
                 <div className="fixed inset-0 z-40 flex items-start justify-center px-4 pt-16 overflow-y-auto">

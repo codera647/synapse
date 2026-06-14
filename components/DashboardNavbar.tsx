@@ -21,6 +21,8 @@ interface DashboardNavbarProps {
     currentOrgId?: string | null;
     onSelectOrg?: (orgId: string) => void;
     onOpenHardware?: () => void;
+    onOpenSettings?: () => void;
+    avatarUrl?: string | null;
     userEmail?: string | null;
     onLogout?: () => void;
 }
@@ -31,6 +33,8 @@ export default function DashboardNavbar({
     currentOrgId = null,
     onSelectOrg,
     onOpenHardware,
+    onOpenSettings,
+    avatarUrl = null,
     userEmail,
     onLogout,
 }: DashboardNavbarProps) {
@@ -148,16 +152,26 @@ export default function DashboardNavbar({
                     }}
                     className="ml-1 flex items-center justify-center hover:scale-105 transition-transform"
                 >
-                    <div className="h-8 w-8 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center ring-1 ring-white/20">
-                        <FiUser className="w-4 h-4 text-white" />
+                    <div className="h-8 w-8 overflow-hidden rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center ring-1 ring-white/20">
+                        {avatarUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                        ) : (
+                            <FiUser className="w-4 h-4 text-white" />
+                        )}
                     </div>
                 </button>
 
                 {openProfileMenu && (
                     <div className="absolute right-0 top-12 w-72 rounded-2xl surface-menu overflow-hidden z-[60]">
                         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-white/10">
-                            <div className="h-9 w-9 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center ring-1 ring-white/20 shrink-0">
-                                <FiUser className="w-4 h-4 text-white" />
+                            <div className="h-9 w-9 overflow-hidden rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center ring-1 ring-white/20 shrink-0">
+                                {avatarUrl ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                                ) : (
+                                    <FiUser className="w-4 h-4 text-white" />
+                                )}
                             </div>
                             <div className="min-w-0">
                                 <p className="text-xs text-white/40">Signed in as</p>
@@ -165,7 +179,13 @@ export default function DashboardNavbar({
                             </div>
                         </div>
                         <div className="p-1.5">
-                            <button className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-white/80 hover:bg-white/8 transition-colors">
+                            <button
+                                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-white/80 hover:bg-white/8 transition-colors"
+                                onClick={() => {
+                                    setOpenProfileMenu(false);
+                                    onOpenSettings?.();
+                                }}
+                            >
                                 <FiSettings className="w-4 h-4 text-white/50" />
                                 <span>Account preferences</span>
                             </button>

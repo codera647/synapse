@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FiUser, FiUsers, FiChevronDown, FiCheck } from "react-icons/fi";
 import ChatPanel, { isLibraryReady } from "@/components/ChatPanel";
+import type { Personalization } from "@/components/SettingsModal";
 
 type OrgLite = { id: string; name: string };
 type LibraryLite = {
@@ -37,12 +38,14 @@ function pickOne<T>(v: T | T[] | null | undefined): T | null {
 export default function ChatWorkspace({
   supabase,
   onLog,
+  personalization = null,
 }: {
   supabase: SupabaseClient;
   // organization/libraries props are accepted for compatibility but the chat now sources its own
   // org context (personal = your libraries; team = a team you pick in-panel).
   organization?: OrgLite | null;
   libraries?: LibraryLite[];
+  personalization?: Personalization | null;
   onLog?: LogFn;
 }) {
   const [me, setMe] = useState<string | null>(null);
@@ -328,6 +331,7 @@ export default function ChatWorkspace({
             shareableLibraries={shareableLibraries}
             onShareLibrary={shareToTeam}
             sharingLibraryId={sharingId}
+            personalization={personalization}
           />
         )}
       </div>

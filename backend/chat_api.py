@@ -67,6 +67,8 @@ class ChatRequest(BaseModel):
     thinking_mode: Optional[str] = None
     # Team chat: pooled libraries may span members' orgs, so retrieve by library_ids only.
     cross_org: bool = False
+    # User personalization (identity + tone presets) — shapes answer STYLE only, never facts.
+    personalization: Optional[Dict[str, Any]] = None
     thread_summary: Optional[str] = None
     history: Optional[List[Dict[str, str]]] = None
     client_request_id: Optional[str] = None
@@ -238,6 +240,71 @@ _FORMAT_RULES = {
 }
 
 
+_LEVEL_WORDS = {
+    "warmth": {"more": "Be notably warm and personable.", "less": "Keep a neutral, matter-of-fact warmth."},
+    "enthusiasm": {"more": "Write with energy and enthusiasm.", "less": "Keep an even, low-key energy."},
+    "headers_lists": {
+        "more": "Structure the answer with clear headings and bullet lists.",
+        "less": "Prefer flowing prose over headings and bullet lists.",
+    },
+    "emoji": {"more": "You may use a few fitting emoji.", "less": "Do not use emoji."},
+}
+_TONE_WORDS = {
+    "professional": "Use a professional, polished tone.",
+    "friendly": "Use a friendly, approachable tone.",
+    "concise": "Be concise and to the point.",
+}
+
+
+def _personalization_block(p: Optional[Dict[str, Any]]) -> str:
+    """Render a compact STYLE directive from the user's saved personalization.
+
+    Affects writing style/identity only — explicitly never the facts, evidence, or citations.
+    Returns "" when nothing meaningful is set, so the prompt is unchanged for users who skip it.
+    """
+    if not p or not isinstance(p, dict):
+        return ""
+
+    def _s(key: str) -> str:
+        v = p.get(key)
+        return str(v).strip() if v is not None else ""
+
+    lines: List[str] = []
+    nickname = _s("nickname")
+    occupation = _s("occupation")
+    about = _s("about_me")
+    if nickname:
+        lines.append(f'- Address the user as "{nickname}".')
+    if occupation:
+        lines.append(f"- The user's occupation: {occupation}.")
+    if about:
+        lines.append(f"- About the user: {about[:600]}")
+
+    tone = (_s("base_tone") or "default").lower()
+    if tone in _TONE_WORDS:
+        lines.append(f"- {_TONE_WORDS[tone]}")
+
+    for field, key in (
+        ("char_warmth", "warmth"),
+        ("char_enthusiasm", "enthusiasm"),
+        ("char_headers_lists", "headers_lists"),
+        ("char_emoji", "emoji"),
+    ):
+        level = (_s(field) or "default").lower()
+        phrase = _LEVEL_WORDS.get(key, {}).get(level)
+        if phrase:
+            lines.append(f"- {phrase}")
+
+    if not lines:
+        return ""
+    return (
+        "USER PERSONALIZATION (apply to writing STYLE and how you address the user ONLY; "
+        "never let it override the EVIDENCE, factual accuracy, the citations, or the format rules):\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
 def _final_answer_prompt(
     user_query: str,
     convo: str,
@@ -245,6 +312,7 @@ def _final_answer_prompt(
     visuals: Optional[List[Dict[str, Any]]] = None,
     detail: str = "balanced",
     citations: Optional[List[Dict[str, Any]]] = None,
+    personalization: Optional[str] = None,
 ) -> List[Dict[str, str]]:
     visual_rule = ""
     if visuals:
@@ -269,7 +337,8 @@ def _final_answer_prompt(
         citation_rule = "Do NOT add inline citations like '(Source: ...)'. Sources are shown separately.\n"
     sys = (
         "You are Synapse.\n"
-        "Answer the USER_QUERY using the EVIDENCE (facts retrieved from the user's PDFs).\n"
+        + (personalization or "")
+        + "Answer the USER_QUERY using the EVIDENCE (facts retrieved from the user's PDFs).\n"
         "PRIOR_CONVERSATION is provided ONLY to resolve references (pronouns, 'it', follow-ups). "
         "Do NOT repeat, copy, or restate any earlier answer — write a NEW answer that directly "
         "addresses the current USER_QUERY.\n"
@@ -731,6 +800,9 @@ def _chat_impl(req: ChatRequest):
                     break
             return out
 
+        # Build the personalization style directive once (identity + tone presets the user saved).
+        persona_block = _personalization_block(req.personalization)
+
         def _synthesize(visuals: Optional[List[Dict[str, Any]]] = None,
                         citations: Optional[List[Dict[str, Any]]] = None) -> str:
             out = client.chat.completions.create(
@@ -738,6 +810,7 @@ def _chat_impl(req: ChatRequest):
                 messages=_final_answer_prompt(
                     req.message, convo, context_doc, visuals=visuals or None,
                     detail=mode_detail, citations=citations or None,
+                    personalization=persona_block,
                 ),
                 temperature=0.2,
                 max_tokens=answer_max_tokens,
