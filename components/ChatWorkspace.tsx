@@ -16,6 +16,7 @@ type LibraryLite = {
   ownerLabel?: string | null;
 };
 type TeamOrg = { id: string; name: string; role: string };
+type TeamMember = { userId: string; name: string | null; email: string; avatarUrl: string | null };
 
 export type ChatSource = {
   library_id: string;
@@ -59,6 +60,7 @@ export default function ChatWorkspace({
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
   const [teamRefresh, setTeamRefresh] = useState(0);
   const [sharingId, setSharingId] = useState<string | null>(null);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
 
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
   const teamMenuRef = useRef<HTMLDivElement | null>(null);
@@ -190,6 +192,32 @@ export default function ChatWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, selectedTeamId, supabase, me, teamRefresh]);
 
+  // Load the selected team's members (for the GitHub-style contributor avatars by the team name).
+  useEffect(() => {
+    if (scope !== "team" || !selectedTeamId) {
+      setTeamMembers([]);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) return;
+      const res = await fetch(`/api/team/members?org=${encodeURIComponent(selectedTeamId)}`, {
+        headers: { authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (!alive || !res.ok) return;
+      const j = (await res.json()) as { members?: TeamMember[] };
+      setTeamMembers(j.members || []);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [scope, selectedTeamId, supabase, teamRefresh]);
+
   // Close the team menu on outside click.
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -301,6 +329,36 @@ export default function ChatWorkspace({
                 ))}
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {/* Contributor-style stacked member avatars for the selected team. */}
+        {scope === "team" && teamMembers.length > 0 ? (
+          <div className="flex items-center pl-1">
+            <div className="flex items-center -space-x-2">
+              {teamMembers.slice(0, 6).map((m) => (
+                <span
+                  key={m.userId}
+                  title={m.name || m.email}
+                  className="grid h-7 w-7 place-items-center overflow-hidden rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 text-[10px] font-semibold text-white ring-2 ring-[var(--bg-primary)] transition-transform hover:z-10 hover:-translate-y-0.5"
+                >
+                  {m.avatarUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={m.avatarUrl} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    (m.name || m.email || "?").slice(0, 1).toUpperCase()
+                  )}
+                </span>
+              ))}
+              {teamMembers.length > 6 ? (
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-white/10 text-[10px] font-medium text-white/70 ring-2 ring-[var(--bg-primary)]">
+                  +{teamMembers.length - 6}
+                </span>
+              ) : null}
+            </div>
+            <span className="ml-2 hidden text-[11px] text-white/40 sm:inline">
+              {teamMembers.length} member{teamMembers.length === 1 ? "" : "s"}
+            </span>
           </div>
         ) : null}
       </div>
