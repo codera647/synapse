@@ -508,7 +508,12 @@ export default function SettingsModal({
                 <p className="text-xs text-white/45">
                   Documents are processed in parallel by workers, per stage. More workers = faster on
                   large corpora (and more concurrent API caption calls). Defaults are auto-tuned to your
-                  hardware; changes apply live.
+                  hardware; changes apply live. Each library is split into one batch per worker, so
+                  these numbers are exactly how many batches you&apos;ll see on the card.
+                </p>
+                <p className="text-[11px] text-white/35">
+                  Your settings are saved to your account. The backend runs a single shared worker
+                  pool, so the most recently applied settings drive the live workers.
                 </p>
                 {workersErr ? (
                   <div className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">

@@ -39,13 +39,12 @@ def create_library_batches(
         return {"created": 0, "batch_size": 0}
 
     # The number of batches sets the MAX parallelism for every stage (one worker per batch at a
-    # time). Decouple it from the worker_count at sync time (which is stale the moment you change
-    # workers in Settings): aim for ~BATCH_TARGET_DOCS docs/batch so raising workers later actually
-    # engages them — but never fewer batches than worker_count, capped by BATCH_MAX_COUNT and total.
-    target = max(1, int(os.getenv("BATCH_TARGET_DOCS", "5")))
+    # time). It is exactly the worker count you configured (passed in as `worker_count` = the
+    # largest per-stage worker setting), so "I set 5 workers" => 5 batches => the card shows N/5.
+    # No hidden doc-based inflation (that's what made 29 docs show up as "0/6"). Capped by the
+    # document count (can't have more batches than docs) and BATCH_MAX_COUNT.
     max_batches = max(1, int(os.getenv("BATCH_MAX_COUNT", "64")))
-    n_batches = min(max(int(worker_count), math.ceil(total / target)), max_batches, total)
-    n_batches = max(1, n_batches)
+    n_batches = min(max(1, int(worker_count)), max_batches, total)
     batch_size = max(1, math.ceil(total / n_batches))
     batches = [docs[i : i + batch_size] for i in range(0, total, batch_size)]
 

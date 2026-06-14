@@ -105,11 +105,15 @@ _PIPELINE_ABORT_STATUSES = {"canceled", "failed"}
 
 def _get_library_pipeline_status(library_id: str) -> str | None:
     res = _sb_execute(
-        supabase.table("libraries").select("pipeline_status").eq("id", library_id).single(),
+        supabase.table("libraries").select("pipeline_status, cancel_requested").eq("id", library_id).single(),
         context="libraries.select(pipeline_status)",
     )
     if not res.data:
         return None
+    # A user cancel sets cancel_requested=true durably; workers never write that column, so an
+    # in-flight worker cannot resurrect the pipeline by overwriting pipeline_status. Treat as canceled.
+    if res.data.get("cancel_requested"):
+        return "canceled"
     return (res.data.get("pipeline_status") or "").lower() or None
 
 
@@ -313,6 +317,16 @@ def run_sync(job):
 
     try:
         sync_workers = int(os.getenv("SYNC_WORKERS", "3"))
+        # Batch count = the largest per-stage worker count currently configured (UI -> env -> auto),
+        # so every stage can fully parallelize and "I set N workers" visibly yields N batches. This
+        # is resolved the same way the live pool resolves its counts.
+        try:
+            import worker_bootstrap
+            _counts = worker_bootstrap._resolve_counts()
+            _batch_stages = ["sync", "layout_parser", "text_extraction", "image_captioning", "chunking", "embedding"]
+            desired_batches = max([1] + [int(_counts.get(s, 0) or 0) for s in _batch_stages])
+        except Exception:
+            desired_batches = max(1, sync_workers)
 
         org = _sb_execute(
             supabase.table("organizations").select("name").eq("id", org_id).single(),
@@ -401,7 +415,7 @@ def run_sync(job):
                 context=f"documents.update(skipped) [{i}:{i+len(ids_chunk)}]",
             )
 
-        batches = create_library_batches(org_id, library_id, worker_count=sync_workers, stage="sync")
+        batches = create_library_batches(org_id, library_id, worker_count=desired_batches, stage="sync")
         total_batches = int(batches.get("created") or 0)
 
         _sb_execute(
@@ -416,7 +430,7 @@ def run_sync(job):
             context="libraries.update(total_batches)",
         )
 
-        print(f"[bootstrap] library={library_id} docs={len(files)} batches={total_batches} workers={sync_workers}")
+        print(f"[bootstrap] library={library_id} docs={len(files)} batches={total_batches} desired={desired_batches}")
 
     except Exception as exc:
         _sb_execute(
@@ -673,6 +687,13 @@ def run_sync_stage_job(stage_job):
                 context="documents.upsert(storage_path.final)",
             )
 
+        # Cancel guard: if the user cancelled while this batch ran, stop here. Mark THIS job
+        # canceled (resume re-queues it) and do NOT mark done / enqueue the next stage / flip the
+        # library back to running. cancel_requested is durable, so this is race-safe.
+        _abort_st = _get_library_pipeline_status(library_id)
+        if _abort_st is None or _abort_st in _PIPELINE_ABORT_STATUSES:
+            _mark_stage_job_canceled(job_id, f"Aborted after batch (library status={_abort_st or 'missing'}).")
+            return
         _sb_execute(
             supabase.table("batch_stage_jobs").update(
                 {"status": "done", "finished_at": now_iso(), "progress_current": total, "progress_total": total}

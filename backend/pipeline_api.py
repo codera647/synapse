@@ -125,15 +125,18 @@ class WorkerConfigRequest(BaseModel):
 
 @router.get("/pipeline/workers")
 def get_pipeline_workers(request: Request):
-    """Per-stage worker counts: auto-suggested (hardware) vs configured vs running."""
-    _require_owner(request)
+    """Per-stage worker counts: auto-suggested (hardware) vs the CALLER's own configured vs running."""
+    user = _require_owner(request)
     import worker_bootstrap
-    return worker_bootstrap.get_pool_status()
+    return worker_bootstrap.get_pool_status(user_id=str(user.id))
 
 
 @router.post("/pipeline/workers")
 def set_pipeline_workers(req: WorkerConfigRequest, request: Request):
-    """Persist per-stage worker counts and reconcile the live pool. Owner only."""
+    """Persist this user's per-stage worker counts and reconcile the live pool. Owner only.
+
+    Config is per-user, so saving never overwrites another account's saved numbers. The physical
+    pool is shared (one VM), so reconcile applies this user's values to the live workers."""
     user = _require_owner(request)
     clean = {}
     for stage, val in (req.counts or {}).items():
@@ -142,16 +145,16 @@ def set_pipeline_workers(req: WorkerConfigRequest, request: Request):
                 clean[stage] = max(0, min(64, int(val)))
             except Exception:
                 continue
-    row = {"id": True, "updated_by": str(user.id), "updated_at": _now_iso()}
+    row = {"user_id": str(user.id), "updated_at": _now_iso()}
     row.update(clean)
     try:
-        supabase.table("pipeline_worker_config").upsert(row, on_conflict="id").execute()
+        supabase.table("pipeline_worker_config").upsert(row, on_conflict="user_id").execute()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Couldn't save worker config: {exc}")
 
     import worker_bootstrap
     applied = worker_bootstrap.reconcile_pool(clean)
-    return {"ok": True, "applied": applied, "status": worker_bootstrap.get_pool_status()}
+    return {"ok": True, "applied": applied, "status": worker_bootstrap.get_pool_status(user_id=str(user.id))}
 
 
 # ----------------------------- request models ------------------------------
@@ -269,6 +272,7 @@ def pipeline_start(req: LibraryRef):
             "pipeline_stage": "sync",
             "pipeline_progress_percent": 0,
             "pipeline_error": None,
+            "cancel_requested": False,
             "pipeline_started_at": _now_iso(),
             "pipeline_finished_at": None,
             "total_batches": 0,
@@ -301,7 +305,7 @@ def pipeline_cancel(req: CancelRequest):
         raise HTTPException(status_code=404, detail="Library not found")
 
     supabase.table("libraries").update(
-        {"pipeline_status": "canceled", "pipeline_error": "Canceled by user"}
+        {"pipeline_status": "canceled", "cancel_requested": True, "pipeline_error": "Canceled by user"}
     ).eq("id", req.library_id).execute()
 
     supabase.table("batch_stage_jobs").update(
@@ -341,6 +345,7 @@ def pipeline_resume(req: LibraryRef):
                 "pipeline_stage": "sync",
                 "pipeline_progress_percent": 0,
                 "pipeline_error": None,
+                "cancel_requested": False,
                 "pipeline_started_at": _now_iso(),
                 "pipeline_finished_at": None,
             }
@@ -379,7 +384,7 @@ def pipeline_resume(req: LibraryRef):
     )
 
     supabase.table("libraries").update(
-        {"status": "processing", "pipeline_status": "running", "pipeline_error": None}
+        {"status": "processing", "pipeline_status": "running", "pipeline_error": None, "cancel_requested": False}
     ).eq("id", req.library_id).execute()
 
     return {"ok": True, "mode": "requeue", "requeued_count": len(requeued)}

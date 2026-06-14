@@ -73,6 +73,7 @@ export async function POST(req: Request) {
                     pipeline_stage: "sync",
                     pipeline_progress_percent: 0,
                     pipeline_error: null,
+                    cancel_requested: false,
                     pipeline_started_at: now,
                     pipeline_finished_at: null,
                 })
@@ -346,6 +347,7 @@ export async function POST(req: Request) {
                 pipeline_status: "running",
                 pipeline_stage: nextStage,
                 pipeline_error: null,
+                cancel_requested: false,
             })
             .eq("id", body.library_id)
             .eq("organization_id", body.organization_id);

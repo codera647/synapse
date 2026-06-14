@@ -95,11 +95,15 @@ _PIPELINE_ABORT_STATUSES = {"canceled", "failed"}
 
 def _get_library_pipeline_status(library_id: str) -> str | None:
     res = _sb_execute(
-        supabase.table("libraries").select("pipeline_status").eq("id", library_id).single(),
+        supabase.table("libraries").select("pipeline_status, cancel_requested").eq("id", library_id).single(),
         context="libraries.select(pipeline_status)",
     )
     if not res.data:
         return None
+    # A user cancel sets cancel_requested=true durably; workers never write that column, so an
+    # in-flight worker cannot resurrect the pipeline by overwriting pipeline_status. Treat as canceled.
+    if res.data.get("cancel_requested"):
+        return "canceled"
     return (res.data.get("pipeline_status") or "").lower() or None
 
 
@@ -796,6 +800,13 @@ def run_chunk_stage_job(stage_job):
                     context="batch_stage_jobs.update(chunking.progress)",
                 )
 
+        # Cancel guard: if the user cancelled while this batch ran, stop here. Mark THIS job
+        # canceled (resume re-queues it) and do NOT mark done / enqueue the next stage / flip the
+        # library back to running. cancel_requested is durable, so this is race-safe.
+        _abort_st = _get_library_pipeline_status(library_id)
+        if _abort_st is None or _abort_st in _PIPELINE_ABORT_STATUSES:
+            _mark_stage_job_canceled(job_id, f"Aborted after batch (library status={_abort_st or 'missing'}).")
+            return
         _sb_execute(
             supabase.table("batch_stage_jobs").update(
                 {"status": "done", "finished_at": now_iso(), "progress_current": total, "progress_total": total}

@@ -39,6 +39,7 @@ export async function POST(req: Request) {
       .from("libraries")
       .update({
         pipeline_status: "canceled",
+        cancel_requested: true,
         pipeline_error: "Canceled by user",
       })
       .eq("id", body.library_id)

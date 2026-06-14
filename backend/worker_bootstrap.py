@@ -254,28 +254,67 @@ def _watchdog_proc(stop_event):
         print(f"[watchdog] failed to start: {exc}")
 
 
+def _sb_client():
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not (url and key):
+        return None
+    from supabase import create_client
+    return create_client(url, key)
+
+
+def _row_to_counts(row: dict) -> dict:
+    out = {}
+    for s in _STAGE_TARGETS:
+        v = (row or {}).get(s)
+        if v is not None:
+            try:
+                out[s] = max(0, int(v))
+            except Exception:
+                pass
+    return out
+
+
 def _load_worker_config() -> dict:
-    """Per-stage counts the owner set in the UI (pipeline_worker_config singleton).
+    """Per-stage counts that drive the LIVE pool. The worker pool is a single shared resource
+    (one VM, one set of processes), so the most-recently-saved user's config wins. Per-user rows
+    keep each account's *saved* settings separate; this just picks which one the pool runs.
     Returns {} if the table is missing/empty so env + auto-plan stay the fallback."""
     try:
-        url = os.getenv("SUPABASE_URL")
-        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        if not (url and key):
+        sb = _sb_client()
+        if sb is None:
             return {}
-        from supabase import create_client
-        sb = create_client(url, key)
-        rows = sb.table("pipeline_worker_config").select("*").limit(1).execute().data or []
-        if not rows:
+        rows = (
+            sb.table("pipeline_worker_config")
+            .select("*")
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        return _row_to_counts(rows[0]) if rows else {}
+    except Exception:
+        return {}
+
+
+def _user_worker_config(user_id: str) -> dict:
+    """One specific user's saved per-stage counts (for showing them their OWN settings in the UI),
+    independent of whose config is currently driving the pool. {} if none saved."""
+    try:
+        sb = _sb_client()
+        if sb is None or not user_id:
             return {}
-        row, out = rows[0], {}
-        for s in _STAGE_TARGETS:
-            v = row.get(s)
-            if v is not None:
-                try:
-                    out[s] = max(0, int(v))
-                except Exception:
-                    pass
-        return out
+        rows = (
+            sb.table("pipeline_worker_config")
+            .select("*")
+            .eq("user_id", str(user_id))
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        return _row_to_counts(rows[0]) if rows else {}
     except Exception:
         return {}
 
@@ -362,10 +401,19 @@ def reconcile_pool(targets: dict) -> dict:
     return applied
 
 
-def get_pool_status() -> dict:
+def get_pool_status(user_id: str | None = None) -> dict:
+    """Pool status for the Settings UI. When `user_id` is given, `configured` reflects THAT user's
+    own saved counts (so each account sees its own numbers) merged over the auto plan; otherwise it
+    reflects the counts currently driving the live pool (latest writer)."""
+    auto = _auto_suggested()
+    if user_id is not None:
+        user_cfg = _user_worker_config(user_id)
+        configured = {stage: int(user_cfg.get(stage, auto.get(stage, 0))) for stage in _STAGE_TARGETS}
+    else:
+        configured = _resolve_counts()
     return {
-        "auto_suggested": _auto_suggested(),
-        "configured": _resolve_counts(),
+        "auto_suggested": auto,
+        "configured": configured,
         "running": {stage: len(_alive_workers(stage)) for stage in _STAGE_TARGETS},
         "started": _POOL_STARTED,
     }
