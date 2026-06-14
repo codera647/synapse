@@ -49,6 +49,7 @@ export default function ChatWorkspace({
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
   const [teamRefresh, setTeamRefresh] = useState(0);
   const [sharingId, setSharingId] = useState<string | null>(null);
+  const [teamDebug, setTeamDebug] = useState<string | null>(null);
 
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
   const teamMenuRef = useRef<HTMLDivElement | null>(null);
@@ -135,10 +136,28 @@ export default function ChatWorkspace({
       const ids = ((shares as Array<{ library_id?: string }>) || [])
         .map((s) => String(s.library_id || ""))
         .filter(Boolean);
+
+      // DIAGNOSTIC: also pull EVERY share row the current user can see (no org filter),
+      // so we can tell whether the share exists under a *different* org id than the one
+      // the chat is querying — which is the only way the Team screen can show 1 while chat shows 0.
+      const { data: allShares, error: allErr } = await supabase
+        .from("team_library_shares")
+        .select("organization_id, library_id");
+      const allRows = (allShares as Array<{ organization_id?: string; library_id?: string }>) || [];
+      const short = (v: string | null | undefined) => (v ? String(v).slice(0, 8) : "—");
+      const dbg =
+        `querying org ${short(selectedTeamId)} → ${ids.length} share(s). ` +
+        `You can see ${allRows.length} share(s) total` +
+        (allRows.length
+          ? `: ${allRows.map((r) => `org ${short(r.organization_id)}`).join(", ")}`
+          : allErr
+            ? ` (read error: ${allErr.message || allErr.code || "RLS?"})`
+            : "");
+      setTeamDebug(dbg);
       onLog?.({
         level: "info",
-        message: `Team chat: ${ids.length} library(ies) shared into this team`,
-        details: { team: selectedTeamId },
+        message: `Team chat diagnostic — ${dbg}`,
+        details: { queriedOrg: selectedTeamId, hitCount: ids.length, allShares: allRows },
       });
       if (ids.length === 0) {
         setTeamLibraries([]);
@@ -324,6 +343,7 @@ export default function ChatWorkspace({
             shareableLibraries={shareableLibraries}
             onShareLibrary={shareToTeam}
             sharingLibraryId={sharingId}
+            teamDebug={scope === "team" ? teamDebug : null}
           />
         )}
       </div>

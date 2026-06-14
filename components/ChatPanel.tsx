@@ -197,6 +197,7 @@ export default function ChatPanel({
   shareableLibraries = [],
   onShareLibrary,
   sharingLibraryId = null,
+  teamDebug = null,
 }: {
   supabase: SupabaseClient;
   organization: OrgLite | null;
@@ -212,6 +213,7 @@ export default function ChatPanel({
   shareableLibraries?: LibraryLite[];
   onShareLibrary?: (libraryId: string) => void;
   sharingLibraryId?: string | null;
+  teamDebug?: string | null;
 }) {
   const isTeam = scope === "team";
   const abortRef = useRef<AbortController | null>(null);
@@ -1485,6 +1487,11 @@ export default function ChatPanel({
                     {isTeam
                       ? "No libraries shared with this team yet."
                       : "No processed libraries yet."}
+                    {isTeam && teamDebug ? (
+                      <div className="mt-2 rounded-md border border-amber-400/25 bg-amber-500/10 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-amber-200/80">
+                        {teamDebug}
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   readyLibraries.map((l) => {
