@@ -528,15 +528,24 @@ def run_clustering_stage_job(stage_job: dict):
 
         mapping, centers = _run_kmeans(ids, vecs)
 
-        # Update chunk embeddings with cluster_id.
-        upserts = [{"chunk_id": cid, "cluster_id": int(lbl)} for cid, lbl in mapping.items()]
-        chunk = int(os.getenv("CLUSTER_UPSERT_CHUNK", "2000"))
-        for i in range(0, len(upserts), chunk):
-            part = upserts[i : i + chunk]
-            _sb_execute(
-                supabase.table(emb_table).upsert(part, on_conflict="chunk_id"),
-                context=f"{emb_table}.upsert(cluster_id)",
-            )
+        # Annotate EXISTING chunk rows with their cluster_id using UPDATE (never upsert): an upsert
+        # with a partial {chunk_id, cluster_id} payload INSERTs a phantom row with null
+        # organization_id (NOT NULL) for any chunk_id that doesn't already exist, which is the
+        # `23502 null value in column "organization_id"` failure. Group by cluster so this is a
+        # handful of bulk UPDATE ... WHERE chunk_id IN (...) calls; non-existent ids simply no-op.
+        from collections import defaultdict
+
+        by_cluster: dict[int, list[str]] = defaultdict(list)
+        for cid, lbl in mapping.items():
+            by_cluster[int(lbl)].append(cid)
+        page = int(os.getenv("CLUSTER_UPDATE_PAGE", "300"))
+        for lbl, cids in by_cluster.items():
+            for i in range(0, len(cids), page):
+                part = cids[i : i + page]
+                _sb_execute(
+                    supabase.table(emb_table).update({"cluster_id": lbl}).in_("chunk_id", part),
+                    context=f"{emb_table}.update(cluster_id)",
+                )
 
         # Write cluster centroids + size for routing/UI.
         counts: dict[int, int] = {}
