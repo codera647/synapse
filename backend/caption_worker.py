@@ -165,17 +165,13 @@ def put_r2_text(key: str, text: str, content_type: str = "text/plain; charset=ut
 
 
 def _pipeline_stages():
-    raw = os.getenv(
-        "PIPELINE_STAGES",
-        "sync,layout_parser,text_extraction,image_captioning,chunking,embedding",
-    )
-    stages = [s.strip() for s in raw.split(",") if s.strip()]
-    return stages or ["image_captioning"]
+    import pipeline_config
+    return pipeline_config.pipeline_stages()
 
 
 def _parallel_extraction_stages():
-    raw = os.getenv("EXTRACTION_PARALLEL_STAGES", "text_extraction,image_captioning")
-    return [s.strip() for s in raw.split(",") if s.strip()]
+    import pipeline_config
+    return pipeline_config.parallel_extraction_stages()
 
 
 def _ensure_stage_job_exists(

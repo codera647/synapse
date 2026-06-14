@@ -214,8 +214,164 @@ def chat_retriever_worker(worker_id: int, stop_event: mp.Event):
     print(f"[{wid}] stopped")
 
 
+# ── Worker-pool registry (user-tunable counts + live reconcile) ──────────────────────
+# Map each pipeline stage to its wrapper loop (defined above). "sync" here = the batch
+# sync workers; preprocess_worker (creates batches) + the watchdog are tracked separately.
+_STAGE_TARGETS = {
+    "sync": sync_batch_worker,
+    "layout_parser": layout_worker,
+    "text_extraction": extraction_worker,
+    "image_captioning": caption_worker,
+    "chunking": chunk_worker,
+    "embedding": embed_worker,
+    "clustering": cluster_worker,
+    "chat_retriever": chat_retriever_worker,
+}
+
+# stage -> list of {"proc": Process, "stop": Event}. Per-worker stop events let us scale a
+# single stage down without touching the others.
+_STAGE_WORKERS: dict = {}
+_MASTER_STOP = None
+_EXTRA_PROCS: list = []  # preprocess + watchdog
+
+_STAGE_ENV = {
+    "sync": "SYNC_WORKERS",
+    "layout_parser": "LAYOUT_WORKERS",
+    "text_extraction": "EXTRACT_WORKERS",
+    "image_captioning": "CAPTION_WORKERS",
+    "chunking": "CHUNK_WORKERS",
+    "embedding": "EMBED_WORKERS",
+    "clustering": "CLUSTER_WORKERS",
+    "chat_retriever": "CHAT_RETRIEVER_WORKERS",
+}
+
+
+def _watchdog_proc(stop_event):
+    try:
+        from watchdog import watchdog_loop
+        watchdog_loop(stop_event)
+    except Exception as exc:
+        print(f"[watchdog] failed to start: {exc}")
+
+
+def _load_worker_config() -> dict:
+    """Per-stage counts the owner set in the UI (pipeline_worker_config singleton).
+    Returns {} if the table is missing/empty so env + auto-plan stay the fallback."""
+    try:
+        url = os.getenv("SUPABASE_URL")
+        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        if not (url and key):
+            return {}
+        from supabase import create_client
+        sb = create_client(url, key)
+        rows = sb.table("pipeline_worker_config").select("*").limit(1).execute().data or []
+        if not rows:
+            return {}
+        row, out = rows[0], {}
+        for s in _STAGE_TARGETS:
+            v = row.get(s)
+            if v is not None:
+                try:
+                    out[s] = max(0, int(v))
+                except Exception:
+                    pass
+        return out
+    except Exception:
+        return {}
+
+
+def _auto_suggested() -> dict:
+    plan = auto_worker_plan()
+    return {
+        "sync": int(plan.get("sync_workers") or 1),
+        "layout_parser": 1,
+        "text_extraction": int(plan.get("extract_workers") or 2),
+        "image_captioning": 1,
+        "chunking": 1,
+        "embedding": int(plan.get("embed_workers") or 1),
+        "clustering": 1,  # clustering re-enabled: it powers cluster-routed retrieval + finalizes
+        "chat_retriever": 0,
+    }
+
+
+def _resolve_counts() -> dict:
+    """Effective per-stage worker count: DB config -> env var -> auto hardware plan."""
+    auto = _auto_suggested()
+    cfg = _load_worker_config()
+    counts = {}
+    for stage in _STAGE_TARGETS:
+        if stage in cfg:
+            counts[stage] = cfg[stage]
+            continue
+        ev = os.getenv(_STAGE_ENV[stage])
+        if ev is not None and ev.strip() != "":
+            try:
+                counts[stage] = max(0, int(ev))
+                continue
+            except Exception:
+                pass
+        counts[stage] = max(0, int(auto[stage]))
+    return counts
+
+
+def _alive_workers(stage: str) -> list:
+    lst = [w for w in _STAGE_WORKERS.get(stage, []) if w["proc"].is_alive()]
+    _STAGE_WORKERS[stage] = lst
+    return lst
+
+
+def _spawn_stage(stage: str, n: int) -> None:
+    target = _STAGE_TARGETS.get(stage)
+    if not target or n <= 0:
+        return
+    lst = _STAGE_WORKERS.setdefault(stage, [])
+    base = len(lst)
+    for i in range(n):
+        ev = mp.Event()
+        p = mp.Process(target=target, args=(base + i + 1, ev))
+        p.start()
+        lst.append({"proc": p, "stop": ev})
+
+
+def _all_procs() -> list:
+    procs = list(_EXTRA_PROCS)
+    for lst in _STAGE_WORKERS.values():
+        procs.extend(w["proc"] for w in lst)
+    return procs
+
+
+def reconcile_pool(targets: dict) -> dict:
+    """Scale stages to `targets` live. Scale-up spawns workers (they just claim queued
+    jobs); scale-down signals the extra workers to exit on their next loop check."""
+    applied = {}
+    for stage, target in (targets or {}).items():
+        if stage not in _STAGE_TARGETS:
+            continue
+        try:
+            target = max(0, int(target))
+        except Exception:
+            continue
+        alive = _alive_workers(stage)
+        if target > len(alive):
+            _spawn_stage(stage, target - len(alive))
+        elif target < len(alive):
+            for w in alive[target:]:
+                w["stop"].set()
+        applied[stage] = target
+    return applied
+
+
+def get_pool_status() -> dict:
+    return {
+        "auto_suggested": _auto_suggested(),
+        "configured": _resolve_counts(),
+        "running": {stage: len(_alive_workers(stage)) for stage in _STAGE_TARGETS},
+        "started": _POOL_STARTED,
+    }
+
+
 def start_worker_pool():
-    global _POOL_STARTED
+    global _POOL_STARTED, _MASTER_STOP, _EXTRA_PROCS
     if _POOL_STARTED:
         print("[worker-pool] already started in this process.")
         return mp.Event(), []
@@ -230,73 +386,39 @@ def start_worker_pool():
     except RuntimeError:
         pass
 
-    plan = auto_worker_plan()
-    count = plan["sync_workers"]
-    extract_count = int(os.getenv("EXTRACT_WORKERS", str(plan.get("extract_workers") or 2)))
-    caption_count = int(os.getenv("CAPTION_WORKERS", "1"))
-    chunk_count = int(os.getenv("CHUNK_WORKERS", "1"))
-    embed_count = int(os.getenv("EMBED_WORKERS", str(plan.get("embed_workers") or 0)))
-    # Clustering is currently disabled in Synapse (we may re-enable later).
-    # Default to 0 so a missing env var never spawns unexpected cluster workers.
-    cluster_count = int(os.getenv("CLUSTER_WORKERS", "0"))
-    chat_retriever_count = int(os.getenv("CHAT_RETRIEVER_WORKERS", "0"))
+    counts = _resolve_counts()
+    print("Worker plan (effective):", counts)
 
-    # For GPU stages, more processes often *reduces* throughput due to contention.
-    # Default to a single layout worker when a GPU is present; allow env override.
-    default_layout = 1 if plan.get("gpu") else 1
-    layout_count = int(os.getenv("LAYOUT_WORKERS", str(default_layout)))
-    print("Worker plan:", plan)
-    print("Layout workers:", layout_count)
-    print("Extract workers:", extract_count)
-    print("Caption workers:", caption_count)
-    print("Chunk workers:", chunk_count)
-    print("Embed workers:", embed_count)
-    print("Cluster workers:", cluster_count)
-    print("Chat retriever workers:", chat_retriever_count)
-
-    stop_event = mp.Event()
-    procs = []
-    # One preprocess worker creates batches; N sync workers process batches in parallel.
-    procs.append(mp.Process(target=preprocess_worker, args=(1, stop_event)))
-    procs[-1].start()
-
-    for i in range(count):
-        p = mp.Process(target=sync_batch_worker, args=(i + 1, stop_event))
-        p.start()
-        procs.append(p)
-    for i in range(layout_count):
-        p = mp.Process(target=layout_worker, args=(i + 1, stop_event))
-        p.start()
-        procs.append(p)
-    for i in range(extract_count):
-        p = mp.Process(target=extraction_worker, args=(i + 1, stop_event))
-        p.start()
-        procs.append(p)
-    for i in range(caption_count):
-        p = mp.Process(target=caption_worker, args=(i + 1, stop_event))
-        p.start()
-        procs.append(p)
-    for i in range(chunk_count):
-        p = mp.Process(target=chunk_worker, args=(i + 1, stop_event))
-        p.start()
-        procs.append(p)
-    for i in range(embed_count):
-        p = mp.Process(target=embed_worker, args=(i + 1, stop_event))
-        p.start()
-        procs.append(p)
-    for i in range(cluster_count):
-        p = mp.Process(target=cluster_worker, args=(i + 1, stop_event))
-        p.start()
-        procs.append(p)
-    for i in range(chat_retriever_count):
-        p = mp.Process(target=chat_retriever_worker, args=(i + 1, stop_event))
-        p.start()
-        procs.append(p)
+    _MASTER_STOP = mp.Event()
+    _EXTRA_PROCS = []
+    # Batch creator (claims library_preprocess jobs) — single.
+    pp = mp.Process(target=preprocess_worker, args=(1, _MASTER_STOP))
+    pp.start()
+    _EXTRA_PROCS.append(pp)
+    # Stale-job watchdog.
+    wp = mp.Process(target=_watchdog_proc, args=(_MASTER_STOP,))
+    wp.start()
+    _EXTRA_PROCS.append(wp)
+    # Stage workers (each with its own stop event for live reconcile).
+    _STAGE_WORKERS.clear()
+    for stage, n in counts.items():
+        _spawn_stage(stage, n)
 
     _POOL_STARTED = True
-    return stop_event, procs
+    return _MASTER_STOP, _all_procs()
 
-def stop_worker_pool(stop_event, procs):
-    stop_event.set()
-    for p in procs:
-        p.join(timeout=5)
+
+def stop_worker_pool(stop_event=None, procs=None):
+    global _POOL_STARTED
+    if _MASTER_STOP is not None:
+        _MASTER_STOP.set()
+    for lst in _STAGE_WORKERS.values():
+        for w in lst:
+            w["stop"].set()
+    for p in _all_procs():
+        try:
+            p.join(timeout=5)
+        except Exception:
+            pass
+    _STAGE_WORKERS.clear()
+    _POOL_STARTED = False

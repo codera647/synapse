@@ -44,12 +44,8 @@ s3 = boto3.client(
 
 
 def _pipeline_stages():
-    raw = os.getenv(
-        "PIPELINE_STAGES",
-        "sync,layout_parser,text_extraction,image_captioning,chunking,embedding",
-    )
-    stages = [s.strip() for s in raw.split(",") if s.strip()]
-    return stages or ["embedding"]
+    import pipeline_config
+    return pipeline_config.pipeline_stages()
 
 
 def _is_retryable_supabase_error(exc: Exception) -> bool:
@@ -540,6 +536,17 @@ def run_embedding_stage_job(stage_job: dict):
             ).eq("id", job_id),
             context="batch_stage_jobs.update(embedding.done)",
         )
+
+        # Enqueue the next stage (e.g. clustering) for this batch — mirrors chunk -> embedding.
+        # cluster_worker gates on all-embeddings-done and uses a per-library lock so only one
+        # clustering job actually runs KMeans; the rest mark done. Without this enqueue the
+        # clustering jobs never exist and the library stalls below 100%.
+        _stages = _pipeline_stages()
+        _idx = _stages.index("embedding") if "embedding" in _stages else -1
+        if 0 <= _idx < len(_stages) - 1:
+            _next_stage = _stages[_idx + 1]
+            if _next_stage:
+                _ensure_stage_job_exists(org_id, library_id, batch_id, _next_stage, total)
 
         _update_library_progress(library_id)
         _maybe_finalize_pipeline(library_id)

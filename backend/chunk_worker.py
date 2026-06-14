@@ -44,14 +44,8 @@ s3 = boto3.client(
 
 
 def _pipeline_stages():
-    # Keep defaults aligned with the full pipeline so downstream stages enqueue automatically
-    # even if PIPELINE_STAGES isn't explicitly set in /workspace/.env.
-    raw = os.getenv(
-        "PIPELINE_STAGES",
-        "sync,layout_parser,text_extraction,image_captioning,chunking,embedding",
-    )
-    stages = [s.strip() for s in raw.split(",") if s.strip()]
-    return stages or ["chunking"]
+    import pipeline_config
+    return pipeline_config.pipeline_stages()
 
 
 def _stage_order(stage: str) -> int:

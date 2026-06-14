@@ -135,9 +135,8 @@ def _cancel_queued_stage_jobs_for_library(library_id: str, reason: str, exclude_
 
 
 def _parallel_extraction_stages():
-    # These stages can run in parallel after layout parsing.
-    raw = os.getenv("EXTRACTION_PARALLEL_STAGES", "text_extraction,image_captioning")
-    return [s.strip() for s in raw.split(",") if s.strip()]
+    import pipeline_config
+    return pipeline_config.parallel_extraction_stages()
 
 
 def _ensure_stage_job_exists(
@@ -639,12 +638,8 @@ def detect_layout_for_pdf_streaming(pdf_bytes: bytes):
 
 
 def _pipeline_stages():
-    raw = os.getenv(
-        "PIPELINE_STAGES",
-        "sync,layout_parser,text_extraction,image_captioning,chunking,embedding",
-    )
-    stages = [s.strip() for s in raw.split(",") if s.strip()]
-    return stages or ["layout_parser"]
+    import pipeline_config
+    return pipeline_config.pipeline_stages()
 
 
 def _count_done_stage_jobs(library_id: str, stage: str) -> int:

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { FiX, FiUser, FiUploadCloud, FiTrash2, FiLogOut, FiCheck, FiSliders, FiUserCheck } from "react-icons/fi";
+import { FiX, FiUser, FiUploadCloud, FiTrash2, FiLogOut, FiCheck, FiSliders, FiUserCheck, FiCpu, FiMinus, FiPlus } from "react-icons/fi";
 
 // Shared shape — also consumed by the dashboard + chat to personalize answers.
 export type Personalization = {
@@ -47,7 +47,23 @@ const LEVELS = [
   { value: "more", label: "More" },
 ];
 
-type Tab = "profile" | "personalization" | "account";
+type Tab = "profile" | "personalization" | "processing" | "account";
+
+const WORKER_STAGES: { key: string; label: string; hint: string }[] = [
+  { key: "sync", label: "Sync", hint: "download documents" },
+  { key: "layout_parser", label: "Layout", hint: "detect page regions" },
+  { key: "text_extraction", label: "Text extraction", hint: "pull text / OCR" },
+  { key: "image_captioning", label: "Captioning", hint: "describe figures/tables (API)" },
+  { key: "chunking", label: "Chunking", hint: "split into chunks" },
+  { key: "embedding", label: "Embedding", hint: "vectorize chunks" },
+  { key: "clustering", label: "Clustering", hint: "group + finalize" },
+];
+
+type WorkerStatus = {
+  auto_suggested?: Record<string, number>;
+  configured?: Record<string, number>;
+  running?: Record<string, number>;
+};
 
 export default function SettingsModal({
   supabase,
@@ -74,11 +90,75 @@ export default function SettingsModal({
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [prefs, setPrefs] = useState<Personalization>(DEFAULT_PREFS);
 
+  const [workers, setWorkers] = useState<WorkerStatus | null>(null);
+  const [workerDraft, setWorkerDraft] = useState<Record<string, number>>({});
+  const [workersLoading, setWorkersLoading] = useState(false);
+  const [workersErr, setWorkersErr] = useState<string | null>(null);
+
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const flash = (kind: "ok" | "err", text: string) => {
     setNotice({ kind, text });
     window.setTimeout(() => setNotice((n) => (n?.text === text ? null : n)), 3500);
+  };
+
+  // Per-stage worker counts (owner-only) — talks to the backend's /pipeline/workers.
+  const loadWorkers = useCallback(async () => {
+    setWorkersLoading(true);
+    setWorkersErr(null);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error("no-session");
+      const res = await fetch("/api/backend/pipeline/workers", {
+        headers: { authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (res.status === 403) {
+        setWorkersErr("Only organization owners can change processing workers.");
+        setWorkers(null);
+        return;
+      }
+      if (!res.ok) throw new Error("load-failed");
+      const d = (await res.json()) as WorkerStatus;
+      setWorkers(d);
+      const cfg = d.configured || {};
+      const draft: Record<string, number> = {};
+      WORKER_STAGES.forEach((s) => {
+        draft[s.key] = Number(cfg[s.key] ?? 0);
+      });
+      setWorkerDraft(draft);
+    } catch {
+      setWorkersErr("Couldn't load worker settings (is the backend reachable?).");
+    } finally {
+      setWorkersLoading(false);
+    }
+  }, [supabase]);
+
+  const saveWorkers = async () => {
+    setWorkersLoading(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error("no-session");
+      const res = await fetch("/api/backend/pipeline/workers", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ counts: workerDraft }),
+      });
+      if (!res.ok) throw new Error("save-failed");
+      const d = (await res.json()) as { status?: WorkerStatus };
+      if (d.status) setWorkers(d.status);
+      flash("ok", "Worker settings applied.");
+    } catch {
+      flash("err", "Couldn't apply worker settings.");
+    } finally {
+      setWorkersLoading(false);
+    }
   };
 
   // Load identity + preferences whenever the modal opens.
@@ -129,9 +209,18 @@ export default function SettingsModal({
     if (open) {
       setTab("profile");
       setNotice(null);
+      setWorkers(null);
+      setWorkersErr(null);
       void load();
     }
   }, [open, load]);
+
+  // Lazy-load worker settings the first time the Processing tab is opened.
+  useEffect(() => {
+    if (open && tab === "processing" && !workers && !workersErr && !workersLoading) {
+      void loadWorkers();
+    }
+  }, [open, tab, workers, workersErr, workersLoading, loadWorkers]);
 
   // Close on Escape.
   useEffect(() => {
@@ -234,6 +323,7 @@ export default function SettingsModal({
   const navItems: { key: Tab; label: string; icon: typeof FiUser }[] = [
     { key: "profile", label: "Profile", icon: FiUser },
     { key: "personalization", label: "Personalization", icon: FiSliders },
+    { key: "processing", label: "Processing", icon: FiCpu },
     { key: "account", label: "Account", icon: FiUserCheck },
   ];
 
@@ -412,6 +502,78 @@ export default function SettingsModal({
                     </div>
                   ))}
                 </div>
+              </div>
+            ) : tab === "processing" ? (
+              <div className="space-y-5">
+                <p className="text-xs text-white/45">
+                  Documents are processed in parallel by workers, per stage. More workers = faster on
+                  large corpora (and more concurrent API caption calls). Defaults are auto-tuned to your
+                  hardware; changes apply live.
+                </p>
+                {workersErr ? (
+                  <div className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                    {workersErr}
+                  </div>
+                ) : workersLoading && !workers ? (
+                  <div className="text-sm text-white/40">Loading…</div>
+                ) : workers ? (
+                  <div className="space-y-2.5">
+                    {WORKER_STAGES.map((s) => {
+                      const auto = workers.auto_suggested?.[s.key] ?? 0;
+                      const running = workers.running?.[s.key] ?? 0;
+                      const val = workerDraft[s.key] ?? 0;
+                      return (
+                        <div
+                          key={s.key}
+                          className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.03] px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <div className="text-sm text-white/85">{s.label}</div>
+                            <div className="text-[11px] text-white/40">
+                              {s.hint} · auto {auto} · running {running}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setWorkerDraft((d) => ({ ...d, [s.key]: Math.max(0, (d[s.key] ?? 0) - 1) }))
+                              }
+                              className="grid h-7 w-7 place-items-center rounded-lg bg-white/5 text-white/70 hover:bg-white/10"
+                            >
+                              <FiMinus className="h-3.5 w-3.5" />
+                            </button>
+                            <span className="w-7 text-center text-sm font-medium text-white">{val}</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setWorkerDraft((d) => ({ ...d, [s.key]: Math.min(64, (d[s.key] ?? 0) + 1) }))
+                              }
+                              className="grid h-7 w-7 place-items-center rounded-lg bg-white/5 text-white/70 hover:bg-white/10"
+                            >
+                              <FiPlus className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={saveWorkers}
+                      disabled={workersLoading}
+                      className="btn-grad mt-1 inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                    >
+                      {workersLoading ? (
+                        <span className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                      ) : (
+                        <FiCheck className="h-4 w-4" />
+                      )}
+                      Apply workers
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-sm text-white/40">No worker data.</div>
+                )}
               </div>
             ) : (
               <div className="space-y-5">

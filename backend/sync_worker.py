@@ -470,13 +470,8 @@ def _update_library_progress(library_id: str):
 
 
 def _pipeline_stages():
-    # Default reflects the current Synapse pipeline (clustering disabled for now).
-    raw = os.getenv(
-        "PIPELINE_STAGES",
-        "sync,layout_parser,text_extraction,image_captioning,chunking,embedding",
-    )
-    stages = [s.strip() for s in raw.split(",") if s.strip()]
-    return stages or ["sync"]
+    import pipeline_config
+    return pipeline_config.pipeline_stages()
 
 
 def _count_done_stage_jobs(library_id: str, stage: str) -> int:

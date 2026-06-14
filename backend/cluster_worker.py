@@ -31,13 +31,8 @@ supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
 def _pipeline_stages():
-    # Clustering is currently disabled in Synapse; this worker is kept for future use.
-    raw = os.getenv(
-        "PIPELINE_STAGES",
-        "sync,layout_parser,text_extraction,image_captioning,chunking,embedding,clustering",
-    )
-    stages = [s.strip() for s in raw.split(",") if s.strip()]
-    return stages or ["clustering"]
+    import pipeline_config
+    return pipeline_config.pipeline_stages()
 
 
 def _stage_order(stage: str) -> int:

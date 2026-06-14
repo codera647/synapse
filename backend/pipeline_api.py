@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import boto3
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from supabase import create_client
@@ -67,17 +67,91 @@ s3 = boto3.client(
 )
 
 
-# Weighted stage ranges — kept identical to docs/sync-pipeline-design.md so the
-# HTTP progress value matches what the frontend computes from Supabase.
-STAGE_RANGES = [
-    ("sync", 0, 20),
-    ("layout_parser", 20, 35),
-    ("text_extraction", 35, 55),
-    ("image_captioning", 55, 70),
-    ("chunking", 70, 82),
-    ("embedding", 82, 94),
-    ("vector_indexing", 94, 100),
+# Weighted stage ranges come from the single source of truth (pipeline_config) so the
+# HTTP progress value matches the stages the workers actually run (incl. clustering) and
+# always reaches 100. Replaces the old hard-coded list that referenced a phantom
+# "vector_indexing" stage and omitted "clustering".
+import pipeline_config
+
+
+def _stage_ranges():
+    return pipeline_config.stage_ranges()
+
+
+_WORKER_STAGES = [
+    "sync",
+    "layout_parser",
+    "text_extraction",
+    "image_captioning",
+    "chunking",
+    "embedding",
+    "clustering",
+    "chat_retriever",
 ]
+
+
+def _require_owner(request: Request):
+    """Validate the Bearer token and require the caller to own at least one org.
+    Worker counts are a deployment-wide setting, so only owners may change them."""
+    auth = request.headers.get("authorization") or ""
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing access token.")
+    token = auth[len("Bearer "):].strip()
+    try:
+        res = supabase.auth.get_user(token)
+        user = getattr(res, "user", None)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired session.")
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired session.")
+    rows = (
+        supabase.table("organization_members")
+        .select("role")
+        .eq("user_id", user.id)
+        .eq("role", "owner")
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=403, detail="Owner only.")
+    return user
+
+
+class WorkerConfigRequest(BaseModel):
+    counts: Dict[str, int] = Field(default_factory=dict)
+
+
+@router.get("/pipeline/workers")
+def get_pipeline_workers(request: Request):
+    """Per-stage worker counts: auto-suggested (hardware) vs configured vs running."""
+    _require_owner(request)
+    import worker_bootstrap
+    return worker_bootstrap.get_pool_status()
+
+
+@router.post("/pipeline/workers")
+def set_pipeline_workers(req: WorkerConfigRequest, request: Request):
+    """Persist per-stage worker counts and reconcile the live pool. Owner only."""
+    user = _require_owner(request)
+    clean = {}
+    for stage, val in (req.counts or {}).items():
+        if stage in _WORKER_STAGES:
+            try:
+                clean[stage] = max(0, min(64, int(val)))
+            except Exception:
+                continue
+    row = {"id": True, "updated_by": str(user.id), "updated_at": _now_iso()}
+    row.update(clean)
+    try:
+        supabase.table("pipeline_worker_config").upsert(row, on_conflict="id").execute()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Couldn't save worker config: {exc}")
+
+    import worker_bootstrap
+    applied = worker_bootstrap.reconcile_pool(clean)
+    return {"ok": True, "applied": applied, "status": worker_bootstrap.get_pool_status()}
 
 
 # ----------------------------- request models ------------------------------
@@ -146,7 +220,7 @@ def pipeline_status(library_id: str = Query(..., description="Library UUID")):
             slot["done"] += 1
 
     progress = 0.0
-    for stage, lo, hi in STAGE_RANGES:
+    for stage, lo, hi in _stage_ranges():
         slot = by_stage.get(stage)
         if not slot or slot["total"] == 0:
             continue
