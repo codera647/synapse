@@ -326,6 +326,7 @@ def _spawn_stage(stage: str, n: int) -> None:
         return
     lst = _STAGE_WORKERS.setdefault(stage, [])
     base = len(lst)
+    print(f"[pool] spawning {n} '{stage}' worker(s) (had {base})")
     for i in range(n):
         ev = mp.Event()
         p = mp.Process(target=target, args=(base + i + 1, ev))

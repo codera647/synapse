@@ -250,6 +250,18 @@ def _maybe_finalize_pipeline(library_id: str):
     if total_batches <= 0:
         return
 
+    # Don't report 100% while any stage job is FAILED.
+    failed = _sb_execute(
+        supabase.table("batch_stage_jobs").select("id").eq("library_id", library_id).eq("status", "failed").limit(1),
+        context="batch_stage_jobs.select(failed.guard)",
+    )
+    if failed.data:
+        _sb_execute(
+            supabase.table("libraries").update({"pipeline_status": "failed", "status": "error"}).eq("id", library_id),
+            context="libraries.update(failed.guard)",
+        )
+        return
+
     stages = _pipeline_stages()
     for st in stages:
         if _count_done_stage_jobs(library_id, st) < total_batches:
@@ -576,9 +588,13 @@ def run_clustering_stage_job(stage_job: dict):
         _update_library_progress(library_id)
         _maybe_finalize_pipeline(library_id)
     except Exception as exc:
+        import traceback
+
         from errors import friendly_error
 
         _emsg = friendly_error(exc)
+        print(f"[cluster] FAILED library={library_id}: {exc}")
+        traceback.print_exc()
         _sb_execute(
             supabase.table(run_table).upsert(
                 {

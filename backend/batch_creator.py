@@ -38,7 +38,15 @@ def create_library_batches(
     if total == 0:
         return {"created": 0, "batch_size": 0}
 
-    batch_size = max(1, math.ceil(total / worker_count))
+    # The number of batches sets the MAX parallelism for every stage (one worker per batch at a
+    # time). Decouple it from the worker_count at sync time (which is stale the moment you change
+    # workers in Settings): aim for ~BATCH_TARGET_DOCS docs/batch so raising workers later actually
+    # engages them — but never fewer batches than worker_count, capped by BATCH_MAX_COUNT and total.
+    target = max(1, int(os.getenv("BATCH_TARGET_DOCS", "5")))
+    max_batches = max(1, int(os.getenv("BATCH_MAX_COUNT", "64")))
+    n_batches = min(max(int(worker_count), math.ceil(total / target)), max_batches, total)
+    n_batches = max(1, n_batches)
+    batch_size = max(1, math.ceil(total / n_batches))
     batches = [docs[i : i + batch_size] for i in range(0, total, batch_size)]
 
     for idx, batch in enumerate(batches):

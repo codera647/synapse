@@ -325,9 +325,30 @@ def _maybe_finalize_pipeline(library_id: str):
     if total_batches <= 0:
         return
 
+    # Never report a misleading 100% while any stage job is FAILED — flip to failed instead.
+    failed = _sb_execute(
+        supabase.table("batch_stage_jobs").select("id").eq("library_id", library_id).eq("status", "failed").limit(1),
+        context="batch_stage_jobs.select(failed.guard)",
+    )
+    if failed.data:
+        _sb_execute(
+            supabase.table("libraries").update({"pipeline_status": "failed", "status": "error"}).eq("id", library_id),
+            context="libraries.update(failed.guard)",
+        )
+        return
+
     stages = _pipeline_stages()
     # If clustering is part of the configured pipeline, let the clustering worker finalize.
     if "clustering" in stages:
+        return
+
+    # Defer if clustering jobs exist (e.g. backfilled, or a stage-config mismatch) but aren't all
+    # done — prevents marking 100% completed while clustering is still pending/failed.
+    cl = _sb_execute(
+        supabase.table("batch_stage_jobs").select("status").eq("library_id", library_id).eq("stage", "clustering"),
+        context="batch_stage_jobs.select(clustering.guard)",
+    )
+    if (cl.data or []) and any(r.get("status") != "done" for r in (cl.data or [])):
         return
 
     for st in stages:
