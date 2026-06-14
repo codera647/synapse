@@ -56,7 +56,6 @@ export default function ChatWorkspace({
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
   const [teamRefresh, setTeamRefresh] = useState(0);
   const [sharingId, setSharingId] = useState<string | null>(null);
-  const [teamDebug, setTeamDebug] = useState<string | null>(null);
 
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
   const teamMenuRef = useRef<HTMLDivElement | null>(null);
@@ -145,57 +144,15 @@ export default function ChatWorkspace({
       const ids = ((shares as Array<{ library_id?: string }>) || [])
         .map((s) => String(s.library_id || ""))
         .filter(Boolean);
-
-      // DIAGNOSTIC: also pull EVERY share row the current user can see (no org filter),
-      // so we can tell whether the share exists under a *different* org id than the one
-      // the chat is querying — which is the only way the Team screen can show 1 while chat shows 0.
-      const { data: allShares, error: allErr } = await supabase
-        .from("team_library_shares")
-        .select("organization_id, library_id");
-      const allRows = (allShares as Array<{ organization_id?: string; library_id?: string }>) || [];
-      const short = (v: string | null | undefined) => (v ? String(v).slice(0, 8) : "—");
-      const dbg =
-        `querying org ${short(selectedTeamId)} → ${ids.length} share(s). ` +
-        `You can see ${allRows.length} share(s) total` +
-        (allRows.length
-          ? `: ${allRows.map((r) => `org ${short(r.organization_id)}`).join(", ")}`
-          : allErr
-            ? ` (read error: ${allErr.message || allErr.code || "RLS?"})`
-            : "");
-      setTeamDebug(dbg);
-      onLog?.({
-        level: "info",
-        message: `Team chat diagnostic — ${dbg}`,
-        details: { queriedOrg: selectedTeamId, hitCount: ids.length, allShares: allRows },
-      });
       if (ids.length === 0) {
         setTeamLibraries([]);
         return;
       }
-      const { data: libs, error: libErr } = await supabase
+      const { data: libs } = await supabase
         .from("libraries")
         .select("id, name, pipeline_status, status, pipeline_progress_percent, created_by_user_id")
         .in("id", ids);
       const rows = (libs as Array<Record<string, unknown>>) || [];
-      // DIAGNOSTIC step 2: did the shared library row come back, and what is its status?
-      setTeamDebug(
-        `${dbg} | libs fetched: ${rows.length}` +
-          (rows.length
-            ? ` → ${rows
-                .map(
-                  (l) =>
-                    `"${l.name}" pipeline=${l.pipeline_status ?? "null"} status=${l.status ?? "null"} pct=${l.pipeline_progress_percent ?? "null"}`,
-                )
-                .join(", ")}`
-            : libErr
-              ? ` (read error: ${libErr.message || libErr.code})`
-              : ` (library_id ${ids.map((i) => i.slice(0, 8)).join(",")} not found in libraries)`),
-      );
-      onLog?.({
-        level: "info",
-        message: `Team chat: ${rows.length} shared library(ies) loaded`,
-        details: rows.map((l) => ({ name: l.name, pipeline_status: l.pipeline_status })),
-      });
       const ownerIds = Array.from(
         new Set(rows.map((l) => String(l.created_by_user_id || "")).filter(Boolean)),
       );
@@ -225,7 +182,10 @@ export default function ChatWorkspace({
     return () => {
       alive = false;
     };
-  }, [scope, selectedTeamId, supabase, me, onLog, teamRefresh]);
+    // `onLog` is intentionally excluded — the parent recreates it each render (e.g. during
+    // library-progress polling), and including it re-fired this fetch in a loop (UI jitter).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, selectedTeamId, supabase, me, teamRefresh]);
 
   // Close the team menu on outside click.
   useEffect(() => {
@@ -368,7 +328,6 @@ export default function ChatWorkspace({
             shareableLibraries={shareableLibraries}
             onShareLibrary={shareToTeam}
             sharingLibraryId={sharingId}
-            teamDebug={scope === "team" ? teamDebug : null}
           />
         )}
       </div>

@@ -213,7 +213,6 @@ export default function ChatPanel({
   shareableLibraries = [],
   onShareLibrary,
   sharingLibraryId = null,
-  teamDebug = null,
 }: {
   supabase: SupabaseClient;
   organization: OrgLite | null;
@@ -229,7 +228,6 @@ export default function ChatPanel({
   shareableLibraries?: LibraryLite[];
   onShareLibrary?: (libraryId: string) => void;
   sharingLibraryId?: string | null;
-  teamDebug?: string | null;
 }) {
   const isTeam = scope === "team";
   const abortRef = useRef<AbortController | null>(null);
@@ -265,6 +263,12 @@ export default function ChatPanel({
   // Only expose libraries that are fully processed.
   const readyLibraries = useMemo(() => {
     return libraries.filter(isLibraryReady).sort((a, b) => a.name.localeCompare(b.name));
+  }, [libraries]);
+
+  // Libraries that are present (e.g. shared into the team) but NOT done processing yet —
+  // shown disabled with their progress so a shared-but-unprocessed library doesn't just vanish.
+  const pendingLibraries = useMemo(() => {
+    return libraries.filter((l) => !isLibraryReady(l)).sort((a, b) => a.name.localeCompare(b.name));
   }, [libraries]);
 
   const activeMessages = useMemo(() => {
@@ -1496,16 +1500,11 @@ export default function ChatPanel({
                 </button>
               </div>
               <div className="max-h-64 overflow-auto synapse-scroll p-1.5">
-                {readyLibraries.length === 0 ? (
+                {readyLibraries.length === 0 && pendingLibraries.length === 0 ? (
                   <div className="px-3 py-4 text-sm text-white/45">
                     {isTeam
                       ? "No libraries shared with this team yet."
                       : "No processed libraries yet."}
-                    {isTeam && teamDebug ? (
-                      <div className="mt-2 rounded-md border border-amber-400/25 bg-amber-500/10 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-amber-200/80">
-                        {teamDebug}
-                      </div>
-                    ) : null}
                   </div>
                 ) : (
                   readyLibraries.map((l) => {
@@ -1531,6 +1530,42 @@ export default function ChatPanel({
                     );
                   })
                 )}
+
+                {/* Present but not finished processing — shown disabled with progress so a shared
+                    library that's still ingesting doesn't appear to be "missing". */}
+                {pendingLibraries.map((l) => {
+                  const pct =
+                    typeof l.pipeline_progress_percent === "number"
+                      ? Math.round(l.pipeline_progress_percent)
+                      : null;
+                  const state = (l.pipeline_status || l.status || "processing").toLowerCase();
+                  const label = state === "failed" || state === "error" ? "failed" : `processing${pct != null ? ` ${pct}%` : "…"}`;
+                  return (
+                    <div
+                      key={l.id}
+                      title="This library is still being processed and can't be used for chat yet."
+                      className="w-full flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-sm text-white/35 cursor-not-allowed"
+                    >
+                      <span className="min-w-0 flex items-center gap-2">
+                        <FiBookOpen className="h-3.5 w-3.5 shrink-0 text-white/20" />
+                        <span className="truncate">{l.name}</span>
+                        {l.ownerLabel ? (
+                          <span className="shrink-0 rounded bg-white/6 px-1.5 py-0.5 text-[10px] text-white/30">{l.ownerLabel}</span>
+                        ) : null}
+                      </span>
+                      <span
+                        className={`shrink-0 inline-flex items-center gap-1.5 text-[11px] ${
+                          label === "failed" ? "text-rose-300/80" : "text-amber-300/80"
+                        }`}
+                      >
+                        {label !== "failed" ? (
+                          <span className="h-3 w-3 rounded-full border-2 border-amber-300/30 border-t-amber-300 animate-spin" />
+                        ) : null}
+                        {label}
+                      </span>
+                    </div>
+                  );
+                })}
 
                 {/* Team mode: share your own processed libraries into this team, right here. */}
                 {isTeam && shareableLibraries.length > 0 ? (
