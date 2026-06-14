@@ -399,6 +399,42 @@ def hybrid_retrieve(
     return rerank_rows(query_text, fused, top_k=top_k)
 
 
+def cluster_diversify(rows: List[Dict[str, Any]], top_k: int) -> List[Dict[str, Any]]:
+    """Level-2 SOFT cluster routing: reorder rows to span topic clusters (round-robin across
+    cluster_id, preserving each cluster's internal relevance order). Improves coverage for
+    comprehensive/aggregation/comparison queries without the recall loss of hard cluster filtering.
+    Best-effort — returns the input truncated if clustering hasn't run or on any failure."""
+    if not rows or (top_k and len(rows) <= top_k and top_k <= 1):
+        return rows
+    ids = [str(r.get("chunk_id")) for r in rows if r.get("chunk_id")]
+    if not ids:
+        return rows[: int(top_k)] if top_k else rows
+    cmap: Dict[str, Any] = {}
+    try:
+        resp = supabase.table("chunk_embeddings").select("chunk_id, cluster_id").in_("chunk_id", ids[:500]).execute()
+        for r in resp.data or []:
+            cmap[str(r.get("chunk_id"))] = r.get("cluster_id")
+    except Exception:
+        return rows[: int(top_k)] if top_k else rows
+    if not any(v is not None for v in cmap.values()):
+        return rows[: int(top_k)] if top_k else rows  # clustering not available
+    from collections import OrderedDict
+
+    buckets: "OrderedDict[Any, List[Dict[str, Any]]]" = OrderedDict()
+    for r in rows:
+        c = cmap.get(str(r.get("chunk_id")))
+        buckets.setdefault(c if c is not None else "_none", []).append(r)
+    out: List[Dict[str, Any]] = []
+    limit = int(top_k) if top_k else len(rows)
+    while len(out) < limit and any(buckets.values()):
+        for c in list(buckets.keys()):
+            if buckets[c]:
+                out.append(buckets[c].pop(0))
+                if len(out) >= limit:
+                    break
+    return out
+
+
 def expand_neighbor_chunks(
     organization_id: Optional[str],
     library_ids: List[str],

@@ -348,3 +348,85 @@ def critique_answer(
         "missing": missing,
         "reason": str(j.get("reason") or "").strip(),
     }
+
+
+# ── CRAG: grade retrieval relevance/sufficiency BEFORE answering ──────────────────────
+_GRADE_SYSTEM = (
+    "You are a retrieval grader (Corrective RAG). Given a USER_QUERY and the retrieved EVIDENCE, "
+    "judge whether the evidence is RELEVANT to the query and SUFFICIENT to answer it well. "
+    "Return STRICT JSON:\n"
+    "- relevant: true|false\n"
+    "- sufficient: true|false\n"
+    "- confidence: number between 0 and 1\n"
+    "- reason: one short sentence."
+)
+
+
+def grade_retrieval(client, query: str, evidence: str, *, model: Optional[str] = None) -> Dict[str, Any]:
+    """Grade whether the retrieved evidence can answer the query. Used to decide whether to
+    broaden retrieval before answering. Never raises — defaults to relevant/sufficient so a
+    grader failure never blocks an answer."""
+    mdl = model or _model_for("CHAT_GRADER_MODEL")
+    user = f"USER_QUERY:\n{query}\n\nEVIDENCE:\n{(evidence or '')[:6000]}\n"
+    try:
+        out = client.chat.completions.create(
+            model=mdl,
+            messages=[{"role": "system", "content": _GRADE_SYSTEM}, {"role": "user", "content": user}],
+            temperature=0.0,
+            max_tokens=200,
+        )
+        j = _json_object(out.choices[0].message.content or "")
+    except Exception:
+        return {"relevant": True, "sufficient": True, "confidence": 1.0, "reason": "grader-failed"}
+    try:
+        conf = float(j.get("confidence"))
+    except Exception:
+        conf = 0.5
+    return {
+        "relevant": bool(j.get("relevant", True)),
+        "sufficient": bool(j.get("sufficient", True)),
+        "confidence": conf,
+        "reason": str(j.get("reason") or "").strip(),
+    }
+
+
+# ── Faithfulness: verify the answer's claims are supported by the evidence ────────────
+_FAITHFUL_SYSTEM = (
+    "You are a faithfulness verifier. Given an ANSWER and the EVIDENCE it must be grounded in, "
+    "find specific factual claims in the ANSWER that are NOT supported by the EVIDENCE "
+    "(hallucinations). Ignore general framing/transitions; focus on concrete facts, numbers, names. "
+    "Return STRICT JSON:\n"
+    "- faithful: true|false (true if every specific claim is supported)\n"
+    "- unsupported: array of short strings, each paraphrasing one unsupported claim (max 5)\n"
+    "- reason: one short sentence."
+)
+
+
+def verify_faithfulness(client, answer: str, evidence: str, *, model: Optional[str] = None) -> Dict[str, Any]:
+    """Detect unsupported claims in the answer relative to the evidence. Never raises — defaults
+    to faithful so a verifier failure never corrupts a good answer."""
+    mdl = model or _model_for("CHAT_FAITHFUL_MODEL")
+    user = f"ANSWER:\n{(answer or '')[:6000]}\n\nEVIDENCE:\n{(evidence or '')[:8000]}\n"
+    try:
+        out = client.chat.completions.create(
+            model=mdl,
+            messages=[{"role": "system", "content": _FAITHFUL_SYSTEM}, {"role": "user", "content": user}],
+            temperature=0.0,
+            max_tokens=400,
+        )
+        j = _json_object(out.choices[0].message.content or "")
+    except Exception:
+        return {"faithful": True, "unsupported": [], "reason": "verifier-failed"}
+    uns: List[str] = []
+    raw = j.get("unsupported")
+    if isinstance(raw, list):
+        for u in raw:
+            u = str(u).strip()
+            if u and u not in uns:
+                uns.append(u)
+    uns = uns[:5]
+    return {
+        "faithful": bool(j.get("faithful", True)) or not uns,
+        "unsupported": uns,
+        "reason": str(j.get("reason") or "").strip(),
+    }

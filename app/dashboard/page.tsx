@@ -14,6 +14,7 @@ import LibraryDrawer from "@/components/LibraryDrawer";
 import ChatWorkspace from "@/components/ChatWorkspace";
 import TeamWorkspace from "@/components/TeamWorkspace";
 import SettingsModal, { type Personalization } from "@/components/SettingsModal";
+import PipelineStepper from "@/components/PipelineStepper";
 
 type Library = {
     id: string;
@@ -1274,7 +1275,15 @@ function DashboardPageInner() {
                                                 </div>
                                             </div>
                                         </div>
+                                        {["running", "queued", "processing"].includes(getPipelineStatus(lib)) ? (
+                                            <div className="mt-2 w-60 max-w-full">
+                                                <PipelineStepper supabase={supabase} libraryId={lib.id} active compact />
+                                            </div>
+                                        ) : null}
                                         <p className="mt-2 text-[11px] text-white/40">
+                                            {["running", "queued", "processing"].includes(getPipelineStatus(lib)) && lib.pipeline_stage
+                                                ? `${lib.pipeline_stage} · `
+                                                : ""}
                                             {Math.round(getProgressPercent(lib))}% complete
                                         </p>
                                     </div>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { FiX, FiRefreshCcw, FiDatabase, FiLayers, FiTrash2 } from "react-icons/fi";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import PipelineStepper from "@/components/PipelineStepper";
 
 type Library = {
   id: string;
@@ -249,11 +250,16 @@ export default function LibraryDrawer({ open, onClose, library, organizationId, 
           </div>
 
           <div className="mt-4 rounded-xl border border-white/10 bg-white/4 p-4">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-gray-500">Pipeline</div>
-            <div className="mt-2 text-sm text-gray-200">
-              Stage: <span className="text-gray-100">{library.pipeline_stage ?? "—"}</span>
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] uppercase tracking-[0.22em] text-gray-500">Pipeline</div>
+              <div className="text-[11px] text-gray-500">
+                {library.pipeline_stage ? <span className="text-gray-300">{library.pipeline_stage}</span> : null}
+              </div>
             </div>
-            <div className="mt-1 text-xs text-gray-500">
+            <div className="mt-3">
+              <PipelineStepper supabase={supabase} libraryId={library.id} active={open} />
+            </div>
+            <div className="mt-3 border-t border-white/8 pt-2 text-xs text-gray-500">
               Created: {formatDate(library.created_at)} · Source: {library.source_type ?? "google_drive"}
             </div>
           </div>

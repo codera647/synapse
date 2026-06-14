@@ -19,7 +19,14 @@ from chat_runtime import (
     hydrate_doc_titles,
     retrieve_chunks,
 )
-from chat_agents import critique_answer, extract_notes, merge_notes, plan_query
+from chat_agents import (
+    critique_answer,
+    extract_notes,
+    grade_retrieval,
+    merge_notes,
+    plan_query,
+    verify_faithfulness,
+)
 
 load_env()
 
@@ -777,6 +784,40 @@ def _chat_impl(req: ChatRequest):
             meta = _hydrate_titles(rows)
         context_doc = build_context_document(notes) or build_evidence_brief(rows)
 
+        # --- CRAG: grade whether the retrieved evidence can answer the query. If it's weak,
+        # broaden retrieval ONCE before drafting (rather than confabulating). Skipped in Fast mode.
+        if (
+            str(os.getenv("CHAT_ENABLE_CRAG", "1")).strip() not in {"0", "false", "False"}
+            and max_critic_rounds > 0
+        ):
+            _set_progress(rid, "Checking the evidence")
+            grade = grade_retrieval(client, req.message, context_doc)
+            weak = (not grade.get("sufficient", True)) or float(grade.get("confidence", 1.0)) < float(
+                os.getenv("CHAT_CRAG_MIN_CONF", "0.45")
+            )
+            if weak:
+                _set_progress(rid, "Broadening the search")
+                broad_qs = ([search_query] + list(sub_queries))[:5] or [search_query]
+                broad: List[Dict[str, Any]] = []
+                for q in broad_qs:
+                    broad.extend(_retrieve_only(q, int(eff_top_k * 1.5)))
+                if broad:
+                    _ingest_notes(search_query, broad)
+                    context_doc = build_context_document(notes) or build_evidence_brief(rows)
+
+        # --- Level-2 cluster routing (soft diversification): for comprehensive queries, reorder the
+        # evidence to span topic clusters so coverage doesn't collapse onto one cluster (MEBench).
+        if (
+            query_class in {"COMPARISON", "AGGREGATION", "MULTI_ENTITY"}
+            and str(os.getenv("CHAT_CLUSTER_DIVERSIFY", "1")).strip() not in {"0", "false", "False"}
+        ):
+            try:
+                from chat_runtime import cluster_diversify
+
+                rows[:] = cluster_diversify(rows, len(rows))
+            except Exception:
+                pass
+
         inline_cites_on = str(os.getenv("CHAT_INLINE_CITATIONS", "1")).strip() not in {"0", "false", "False"}
 
         def _build_cites() -> List[Dict[str, Any]]:
@@ -866,6 +907,44 @@ def _chat_impl(req: ChatRequest):
         # UI renders sources separately; strip any inline "(Source: ...)" the model might emit.
         answer = re.sub(r"\(\s*Source\s*:[^)]+\)", "", answer, flags=re.IGNORECASE).strip()
         answer, sources_used = _strip_and_detect_sources_used(answer)
+
+        # --- Faithfulness verifier (Deep mode): repair claims unsupported by the evidence.
+        if (
+            str(os.getenv("CHAT_ENABLE_FAITHFULNESS", "1")).strip() not in {"0", "false", "False"}
+            and max_critic_rounds >= 2
+        ):
+            _set_progress(rid, "Verifying the answer against the sources")
+            fv = verify_faithfulness(client, answer, context_doc)
+            if not fv.get("faithful", True) and fv.get("unsupported"):
+                _set_progress(rid, "Correcting unsupported claims")
+                try:
+                    uns = "\n".join(f"- {u}" for u in fv["unsupported"])
+                    corr = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Revise the ANSWER so every specific claim is supported by the EVIDENCE. "
+                                    "Remove or qualify (e.g. 'not specified in the sources') each unsupported "
+                                    "claim. Keep all [[CITE:n]] and [[VISUAL:id]] markers and the formatting "
+                                    "intact. Return ONLY the revised answer."
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": f"UNSUPPORTED_CLAIMS:\n{uns}\n\nANSWER:\n{answer}\n\nEVIDENCE:\n{context_doc[:8000]}",
+                            },
+                        ],
+                        temperature=0.0,
+                        max_tokens=answer_max_tokens,
+                    )
+                    revised = (corr.choices[0].message.content or "").strip()
+                    if revised:
+                        revised = re.sub(r"\(\s*Source\s*:[^)]+\)", "", revised, flags=re.IGNORECASE).strip()
+                        answer, sources_used = _strip_and_detect_sources_used(revised)
+                except Exception:
+                    pass
 
         # --- Resolve the [[VISUAL:id]] markers the model placed: keep valid ones, strip the rest.
         visuals_out: List[Dict[str, Any]] = []
