@@ -390,6 +390,8 @@ export default function ChatWorkspace({
             onShareLibrary={shareToTeam}
             sharingLibraryId={sharingId}
             personalization={personalization}
+            members={scope === "team" ? teamMembers : []}
+            currentUserId={me}
           />
         )}
       </div>

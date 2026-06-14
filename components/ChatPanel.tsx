@@ -145,6 +145,7 @@ type MessageRow = {
   content: string;
   status: string | null;
   created_at: string | null;
+  created_by_user_id?: string | null;
 };
 
 type SourceRow = {
@@ -172,8 +173,11 @@ type ChatMessage = {
   stage?: string; // live "what the agent is doing" message while generating
   steps?: string[]; // accumulated distinct stages, for the collapsible activity trail
   startedAt?: number; // generation start (for the elapsed timer)
+  senderId?: string | null; // who sent a user message (team chats show their avatar)
   retryText?: string; // for error messages: the user prompt to retry
 };
+
+type ChatMember = { userId: string; name: string | null; email: string; avatarUrl: string | null };
 
 
 function makeId() {
@@ -217,6 +221,8 @@ export default function ChatPanel({
   onShareLibrary,
   sharingLibraryId = null,
   personalization = null,
+  members = [],
+  currentUserId = null,
 }: {
   supabase: SupabaseClient;
   organization: OrgLite | null;
@@ -234,8 +240,16 @@ export default function ChatPanel({
   sharingLibraryId?: string | null;
   // User personalization (identity + tone presets) — sent to the backend to shape answer style.
   personalization?: Record<string, unknown> | null;
+  // Team mode: member profiles (for per-message sender avatars) + the current user's id.
+  members?: ChatMember[];
+  currentUserId?: string | null;
 }) {
   const isTeam = scope === "team";
+  const memberMap = useMemo(() => {
+    const m = new Map<string, ChatMember>();
+    for (const mm of members) m.set(mm.userId, mm);
+    return m;
+  }, [members]);
   const abortRef = useRef<AbortController | null>(null);
   const assistantDraftIdRef = useRef<string | null>(null);
   const lastAnswerRef = useRef<string | null>(null);
@@ -407,7 +421,7 @@ export default function ChatPanel({
     if (!organization?.id) return;
     const { data, error } = await supabase
       .from("chat_messages")
-      .select("id, role, content, status, created_at")
+      .select("id, role, content, status, created_at, created_by_user_id")
       .eq("organization_id", organization.id)
       .eq("thread_id", threadId)
       .order("created_at", { ascending: true })
@@ -425,6 +439,7 @@ export default function ChatPanel({
       content: String(m.content || ""),
       ts: new Date(String(m.created_at || new Date().toISOString())).getTime(),
       status: (String(m.status || "done") as ChatMessage["status"]) || "done",
+      senderId: m.created_by_user_id ?? null,
     }));
 
     const assistantIds = msgs.filter((m) => m.role === "assistant").map((m) => m.id);
@@ -846,6 +861,7 @@ export default function ChatPanel({
       content: userText,
       ts: Date.now(),
       status: "done",
+      senderId: currentUserId,
     };
     // Sending always re-arms auto-follow so the user sees their message + the typing answer.
     stickToBottomRef.current = true;
@@ -1102,6 +1118,7 @@ export default function ChatPanel({
             role: "user",
             content: userText,
             status: "done",
+            created_by_user_id: currentUserId,
           });
 
           // 2) Update the thread title (first message) / activity.
@@ -1390,11 +1407,32 @@ export default function ChatPanel({
               {displayMessages.map((m) => {
                 const isUser = m.role === "user";
                 if (isUser) {
+                  const sender = m.senderId ? memberMap.get(m.senderId) : null;
+                  const isMe = !m.senderId || m.senderId === currentUserId;
+                  const senderLabel = sender?.name || (sender?.email ? sender.email.split("@")[0] : isMe ? "You" : "Member");
                   return (
-                    <div key={m.id} className="flex justify-end">
-                      <div className="max-w-[80%] rounded-2xl rounded-tr-md bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2.5 text-sm text-white shadow-lg shadow-violet-600/25 whitespace-pre-wrap">
-                        {m.content}
+                    <div key={m.id} className="flex items-end justify-end gap-2">
+                      <div className="flex max-w-[80%] flex-col items-end">
+                        {isTeam && !isMe ? (
+                          <span className="mb-1 mr-1 text-[11px] text-white/45">{senderLabel}</span>
+                        ) : null}
+                        <div className="rounded-2xl rounded-tr-md bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2.5 text-sm text-white shadow-lg shadow-violet-600/25 whitespace-pre-wrap">
+                          {m.content}
+                        </div>
                       </div>
+                      {isTeam ? (
+                        <span
+                          title={senderLabel}
+                          className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 text-[10px] font-semibold text-white ring-1 ring-white/15"
+                        >
+                          {sender?.avatarUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={sender.avatarUrl} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            senderLabel.slice(0, 1).toUpperCase()
+                          )}
+                        </span>
+                      ) : null}
                     </div>
                   );
                 }
