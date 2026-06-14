@@ -1089,6 +1089,8 @@ function DashboardPageInner() {
                 currentOrgId={currentOrg?.id ?? null}
                 onSelectOrg={handleSelectOrg}
                 onOpenHardware={() => setHardwareOpen(true)}
+                onOpenSettings={() => setSettingsOpen(true)}
+                avatarUrl={avatarUrl}
                 userEmail={userEmail}
                 onLogout={handleLogout}
             />
