@@ -1,0 +1,185 @@
+"""
+backend/vlm_client.py
+
+Hosted vision-language model client (OpenAI-compatible). Default provider = OpenRouter
+with Qwen2.5-VL-72B — far stronger than the local Qwen2-VL-2B, and it runs off the GPU,
+freeing the L4's biggest consumer (captioning).
+
+Two jobs:
+  - describe_visual(): one structured call per cropped figure/table/chart/formula. Returns a
+    dict whose keys are a SUPERSET of the local Qwen output (short_caption, key_observations,
+    extracted_entities, uncertainties, confidence) plus table_markdown / formula_latex /
+    chart_summary, so it's a drop-in for caption_worker._qwen_generate_batch.
+  - transcribe_page() / ocr_image(): VLM OCR for scanned / multi-column pages (correct reading
+    order), replacing Surya/Tesseract/GLM on the pages that need it.
+
+Config (env):
+  CAPTION_VLM_BASE_URL   default https://openrouter.ai/api/v1
+  CAPTION_VLM_API_KEY    required (key lives in git-ignored api-open-router.txt -> set as env)
+  CAPTION_VLM_MODEL      default qwen/qwen2.5-vl-72b-instruct
+  CAPTION_VLM_MAX_TOKENS / CAPTION_VLM_OCR_MAX_TOKENS / CAPTION_VLM_JPEG_Q
+"""
+
+from __future__ import annotations
+
+import base64
+import io
+import json
+import os
+from typing import Any, Dict, List, Optional
+
+_DEFAULT_BASE = "https://openrouter.ai/api/v1"
+_DEFAULT_MODEL = "qwen/qwen2.5-vl-72b-instruct"
+
+
+def _cfg():
+    base = (os.getenv("CAPTION_VLM_BASE_URL") or _DEFAULT_BASE).strip() or _DEFAULT_BASE
+    key = (os.getenv("CAPTION_VLM_API_KEY") or os.getenv("OPENROUTER_API_KEY") or "").strip()
+    model = (os.getenv("CAPTION_VLM_MODEL") or _DEFAULT_MODEL).strip() or _DEFAULT_MODEL
+    return base, key, model
+
+
+def is_configured() -> bool:
+    """True only if an API key is present — callers fall back to local models otherwise."""
+    _, key, _ = _cfg()
+    return bool(key)
+
+
+_client = None
+
+
+def _get_client():
+    global _client
+    if _client is not None:
+        return _client
+    from openai import OpenAI
+
+    base, key, _ = _cfg()
+    _client = OpenAI(base_url=base, api_key=key)
+    return _client
+
+
+def _img_to_data_url(img) -> str:
+    """PIL.Image -> base64 data URL (JPEG to keep payloads small)."""
+    buf = io.BytesIO()
+    rgb = img if getattr(img, "mode", "RGB") == "RGB" else img.convert("RGB")
+    rgb.save(buf, format="JPEG", quality=int(os.getenv("CAPTION_VLM_JPEG_Q", "85")))
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/jpeg;base64,{b64}"
+
+
+def _chat(messages: List[dict], max_tokens: int, temperature: float = 0.1) -> str:
+    client = _get_client()
+    _, _, model = _cfg()
+    extra_headers: Dict[str, str] = {}
+    ref = (os.getenv("CAPTION_VLM_REFERER") or "").strip()
+    if ref:
+        extra_headers["HTTP-Referer"] = ref
+    title = (os.getenv("CAPTION_VLM_TITLE") or "Synapse").strip()
+    if title:
+        extra_headers["X-Title"] = title
+    resp = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        extra_headers=extra_headers or None,
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+def _extract_json(s: str) -> Optional[dict]:
+    s = (s or "").strip()
+    if s.startswith("```"):
+        s = s.strip("`")
+        nl = s.find("\n")
+        if nl != -1 and s[:nl].strip().lower() in {"json", ""}:
+            s = s[nl + 1 :]
+    a, b = s.find("{"), s.rfind("}")
+    if a != -1 and b > a:
+        try:
+            return json.loads(s[a : b + 1])
+        except Exception:
+            return None
+    return None
+
+
+_VISUAL_PROMPT = (
+    "You are analyzing a SINGLE visual (figure, table, chart, or formula) cropped from a "
+    "document. Return ONLY a JSON object with these keys:\n"
+    '  "short_caption": one concise sentence describing what it shows.\n'
+    '  "key_observations": array of 2-6 short factual bullets grounded in the image.\n'
+    '  "extracted_entities": object mapping notable labels/axes/units/totals -> value.\n'
+    '  "table_markdown": if it is a TABLE, the full table as GitHub-flavored markdown; else null.\n'
+    '  "formula_latex": if it is a FORMULA/equation, the LaTeX; else null.\n'
+    '  "chart_summary": if it is a CHART/plot, one sentence on the trend/comparison; else null.\n'
+    '  "uncertainties": array of short strings for anything unclear.\n'
+    '  "confidence": number between 0 and 1.\n'
+    "Be faithful to the image; never invent numbers. Output JSON only."
+)
+
+
+def describe_visual(
+    crop,
+    kind: str = "",
+    caption_text: Optional[str] = None,
+    ocr_text: Optional[str] = None,
+    table_csv: Optional[str] = None,
+    nearby_mentions: Optional[List[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Structured description of one cropped visual (PIL.Image). Returns a dict compatible with
+    the local Qwen output plus table_markdown/formula_latex/chart_summary. None on failure."""
+    if not is_configured() or crop is None:
+        return None
+    ctx = {
+        "kind": kind or "unknown",
+        "pdf_caption": caption_text or None,
+        "ocr_text": (ocr_text or "")[:1500] or None,
+        "table_text_csv": (table_csv or "")[:2000] or None,
+        "nearby_mentions": (nearby_mentions or [])[:5],
+    }
+    try:
+        content = [
+            {"type": "text", "text": _VISUAL_PROMPT + "\n\nCONTEXT (optional hints): " + json.dumps(ctx, ensure_ascii=True)},
+            {"type": "image_url", "image_url": {"url": _img_to_data_url(crop)}},
+        ]
+        out = _chat([{"role": "user", "content": content}], max_tokens=int(os.getenv("CAPTION_VLM_MAX_TOKENS", "700")))
+        obj = _extract_json(out)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+_OCR_PROMPT = (
+    "Transcribe ALL readable text from this document page image, preserving reading order. "
+    "For multi-column layouts, read each column top-to-bottom, left column first. Output the "
+    "plain text only, with no commentary. If there is no text, output nothing."
+)
+
+
+def transcribe_page(img) -> Optional[str]:
+    """Full-page OCR/transcription via the VLM — handles scanned pages and multi-column order."""
+    if not is_configured() or img is None:
+        return None
+    try:
+        content = [
+            {"type": "text", "text": _OCR_PROMPT},
+            {"type": "image_url", "image_url": {"url": _img_to_data_url(img)}},
+        ]
+        return _chat([{"role": "user", "content": content}], max_tokens=int(os.getenv("CAPTION_VLM_OCR_MAX_TOKENS", "1800")))
+    except Exception:
+        return None
+
+
+def ocr_image(crop) -> Optional[str]:
+    """OCR a cropped region via the VLM (drop-in for caption_worker._ocr_image)."""
+    if not is_configured() or crop is None:
+        return None
+    try:
+        content = [
+            {"type": "text", "text": "Transcribe all text visible in this image. Output plain text only."},
+            {"type": "image_url", "image_url": {"url": _img_to_data_url(crop)}},
+        ]
+        return _chat([{"role": "user", "content": content}], max_tokens=int(os.getenv("CAPTION_VLM_OCR_MAX_TOKENS", "1800")))
+    except Exception:
+        return None

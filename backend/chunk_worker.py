@@ -425,6 +425,41 @@ def _make_context_prefix(
     return " | ".join(parts).strip()
 
 
+def _contextual_enabled() -> bool:
+    return str(os.getenv("CHUNK_CONTEXTUAL", "0")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _contextualize_chunk(doc_anchor: str, chunk_text: str) -> str:
+    """Contextual Retrieval (Anthropic): a short situating sentence prepended to the chunk
+    before embedding — markedly reduces failed retrievals. Gated by CHUNK_CONTEXTUAL (opt-in:
+    one LLM call per chunk at ingest). Best-effort — returns "" on any failure."""
+    if not _contextual_enabled():
+        return ""
+    chunk_text = (chunk_text or "").strip()
+    if not chunk_text:
+        return ""
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        model = os.getenv("CHUNK_CONTEXT_MODEL") or os.getenv("CHAT_GPT_MODEL", "gpt-4o-mini")
+        prompt = (
+            "<document>\n" + (doc_anchor or "")[:4000] + "\n</document>\n"
+            "<chunk>\n" + chunk_text[:2000] + "\n</chunk>\n"
+            "Give a short, single-sentence context that situates this chunk within the document "
+            "to improve search retrieval. Answer with ONLY the sentence."
+        )
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=80,
+        )
+        return (resp.choices[0].message.content or "").strip()
+    except Exception:
+        return ""
+
+
 def _semantic_boundaries(block_texts: list[str]) -> set[int]:
     """
     Optional semantic boundary detection using a small embedding model.
@@ -581,6 +616,12 @@ def run_chunk_stage_job(stage_job):
 
             doc_title = _clean_text(str((docs_by_id.get(str(doc_id)) or {}).get("title") or "")) or None
 
+            # Document anchor for Contextual Retrieval (leading text of the doc), computed once.
+            doc_context_anchor = ""
+            if _contextual_enabled():
+                _lead = " ".join((b.get("text") or "") for b in flat_blocks[:40])
+                doc_context_anchor = ((doc_title + "\n") if doc_title else "") + _lead[:3500]
+
             chunks: list[dict] = []
             cur_blocks: list[dict] = []
             cur_heading: str | None = None
@@ -623,6 +664,10 @@ def run_chunk_stage_job(stage_job):
                         vis_snips.append(sn)
 
                 context_prefix = _make_context_prefix(doc_title, cur_heading or cur_section, page_start, page_end)
+                # Contextual Retrieval: prepend an LLM-generated situating sentence (opt-in).
+                _llm_ctx = _contextualize_chunk(doc_context_anchor, text)
+                if _llm_ctx:
+                    context_prefix = (_llm_ctx + " | " + context_prefix) if context_prefix else _llm_ctx
                 embedding_text = context_prefix
                 if embedding_text:
                     embedding_text += "\n\n"
@@ -642,6 +687,7 @@ def run_chunk_stage_job(stage_job):
                         "page_start": page_start,
                         "page_end": page_end,
                         "section_heading": cur_heading or cur_section,
+                        "locator": (cur_blocks[0].get("locator") if cur_blocks else None),
                         "block_ids": block_ids,
                         "text": text,
                         "context_prefix": context_prefix,
@@ -662,6 +708,19 @@ def run_chunk_stage_job(stage_job):
             for i, b in enumerate(flat_blocks):
                 txt = _clean_text(b["text"])
                 if not txt:
+                    continue
+
+                # Format parsers (code functions / spreadsheet row-groups) mark hard chunk
+                # boundaries — one self-contained chunk per block, no cross-boundary overlap.
+                if b.get("force_chunk"):
+                    if cur_blocks:
+                        flush_chunk(force=True)
+                        cur_blocks = []
+                    if b.get("section_heading"):
+                        cur_heading = b.get("section_heading")
+                    cur_blocks = [b]
+                    flush_chunk(force=True)
+                    cur_blocks = []
                     continue
 
                 # Update section heading state when we see a heading-like block.

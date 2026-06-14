@@ -518,6 +518,54 @@ def run_text_extraction_stage_job(stage_job):
             key = d.get("storage_path_raw")
             mime = (d.get("mime_type") or "").lower()
             if not key or ("pdf" not in mime):
+                # Non-PDF formats (Excel / CSV / code / text): parse to the SAME text IR so
+                # chunk -> embed -> retrieve work unchanged. Skip only if unsupported.
+                ir = None
+                if key:
+                    try:
+                        import document_parsers
+
+                        fname = d.get("title") or (key.rsplit("/", 1)[-1] if key else "")
+                        ir = document_parsers.parse_to_ir(d.get("mime_type"), fname, fetch_r2_bytes(key))
+                    except Exception:
+                        ir = None
+                if ir and ir.get("pages"):
+                    out_key = f"text/{org_id}/{library_id}/{doc_id}.json"
+                    put_r2_json(
+                        out_key,
+                        {
+                            "doc_id": doc_id,
+                            "library_id": library_id,
+                            "organization_id": org_id,
+                            "created_at": now_iso(),
+                            "render_scale": 1.0,
+                            "layout_key": None,
+                            "source_pdf_key": key,
+                            "format": ir.get("format"),
+                            "pages": ir["pages"],
+                            "links": ir.get("links") or [],
+                        },
+                    )
+                    doc_updates.append(
+                        {
+                            "id": doc_id,
+                            "organization_id": d.get("organization_id") or org_id,
+                            "library_id": d.get("library_id") or library_id,
+                            "title": d.get("title") or doc_id,
+                            "gdrive_file_id": d.get("gdrive_file_id"),
+                            "mime_type": d.get("mime_type"),
+                            "file_size_bytes": d.get("file_size_bytes"),
+                            "status": d.get("status") or "pending",
+                            "storage_path_raw": key,
+                            "storage_path_text": out_key,
+                        }
+                    )
+                    if len(doc_updates) >= doc_update_chunk:
+                        _sb_execute(
+                            supabase.table("documents").upsert(doc_updates, on_conflict="id"),
+                            context="documents.upsert(storage_path_text.nonpdf)",
+                        )
+                        doc_updates = []
                 current += 1
                 if current % progress_every == 0:
                     _sb_execute(

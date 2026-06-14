@@ -475,6 +475,7 @@ def run_embedding_stage_job(stage_job: dict):
                         "page_start": int(ch.get("page_start") or 0),
                         "page_end": int(ch.get("page_end") or 0),
                         "section_heading": ch.get("section_heading"),
+                        "locator": ch.get("locator"),
                         "text": ch.get("text"),
                         "context_prefix": ch.get("context_prefix"),
                         "embedding_text": ch.get("embedding_text"),

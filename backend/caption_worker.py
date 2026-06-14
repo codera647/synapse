@@ -1061,6 +1061,33 @@ def _qwen_generate_batch(tasks: List[dict]) -> List[Optional[dict]]:
     """
     if not tasks:
         return []
+
+    # API captioner (OpenRouter Qwen2.5-VL): off-GPU, far stronger than local Qwen2-VL-2B, and
+    # returns the SAME dict shape so all downstream parsing is unchanged. Enable with
+    # CAPTION_USE_API=1 + CAPTION_VLM_API_KEY. Falls through to the local model on failure.
+    if str(os.getenv("CAPTION_USE_API", "0")).strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            import vlm_client
+
+            if vlm_client.is_configured():
+                outs: List[Optional[dict]] = []
+                for t in tasks:
+                    obj = vlm_client.describe_visual(
+                        t.get("crop"),
+                        kind=t.get("kind") or "figure",
+                        caption_text=t.get("caption_text"),
+                        ocr_text=t.get("ocr_text"),
+                        table_csv=t.get("table_csv"),
+                        nearby_mentions=t.get("nearby_mentions"),
+                    )
+                    if isinstance(obj, dict) and obj.get("formula_latex") and not obj.get("latex"):
+                        obj["latex"] = obj.get("formula_latex")
+                    outs.append(obj)
+                if any(o is not None for o in outs):
+                    return outs
+        except Exception:
+            pass  # fall through to local Qwen below
+
     if os.getenv("VIS_ENABLE_QWEN_FALLBACK", "1") not in {"1", "true", "yes", "on"}:
         return [None for _ in tasks]
     if os.getenv("VIS_QWEN_MODE", "auto").strip().lower() == "off":

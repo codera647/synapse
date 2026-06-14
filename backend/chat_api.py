@@ -522,16 +522,18 @@ def _retrieve_rows(
         except Exception:
             rows = []
 
-    # Inline fallback (no queue tables / workers, or workers returned nothing).
+    # Inline hybrid retrieval: vector (Level 3) + FTS keyword (Level 1), fused with RRF, then
+    # cross-encoder reranked. This is the active path on the VM (CHAT_USE_WORKERS=0).
     os.environ["CHAT_LAST_QUERY_TEXT"] = query_text
-    rows = retrieve_chunks(organization_id, library_ids, query_embedding, top_k=top_k, cross_org=cross_org)
-    if not rows:
-        try:
-            from chat_runtime import keyword_search_chunks
+    try:
+        from chat_runtime import hybrid_retrieve
 
-            rows = keyword_search_chunks(organization_id, library_ids, query_text, top_k=top_k, cross_org=cross_org)
-        except Exception:
-            rows = []
+        rows = hybrid_retrieve(
+            organization_id, library_ids, query_text, query_embedding, top_k=top_k, cross_org=cross_org
+        )
+    except Exception:
+        # Last-ditch: plain vector retrieval if anything in the hybrid path fails.
+        rows = retrieve_chunks(organization_id, library_ids, query_embedding, top_k=top_k, cross_org=cross_org)
     return rows
 
 

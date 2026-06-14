@@ -64,8 +64,24 @@ def _get_embedder():
     return _embedder
 
 
+def _default_query_instruction() -> str:
+    """Model-aware default. BGE-*-en-v1.5 use an asymmetric query instruction; BGE-M3 (and
+    most newer models) are instruction-free for dense retrieval, so swapping EMBED_MODEL to
+    bge-m3 needs no config. Override either way with CHAT_QUERY_INSTRUCTION."""
+    model = (os.getenv("EMBED_MODEL", "BAAI/bge-large-en-v1.5") or "").lower()
+    if "m3" in model:
+        return ""
+    if "bge" in model and "en" in model:
+        return "Represent this sentence for searching relevant passages: "
+    return ""
+
+
 def embed_query(text: str) -> List[float]:
-    emb = _get_embedder().encode([text], normalize_embeddings=True, show_progress_bar=False)
+    # Passages are embedded raw (no instruction); the query may carry a retrieval instruction
+    # for BGE-en models (asymmetric s2p). Auto-selected per model; override via env.
+    instr = os.getenv("CHAT_QUERY_INSTRUCTION", _default_query_instruction())
+    q = f"{instr}{text}" if instr else text
+    emb = _get_embedder().encode([q], normalize_embeddings=True, show_progress_bar=False)
     # numpy -> list
     try:
         import numpy as np
@@ -103,11 +119,57 @@ def keyword_search_chunks(
     cross_org: bool = False,
 ) -> List[Dict[str, Any]]:
     """
-    Cheap lexical fallback (works even if the vector match RPC isn't installed).
-    Not as strong as BM25/FTS, but saves us from hard failures.
-
-    cross_org=True (TEAM chat): filter by library_id only — the pooled libraries may span orgs.
+    Level-1 lexical retrieval via Postgres full-text search (BM25-like ts_rank_cd over a
+    GIN-indexed tsvector). Strong on exact terms, names, numbers, identifiers — the cases
+    dense vectors miss. Falls back to the old ILIKE scan if the FTS RPC isn't installed yet,
+    so deployments without docs/supabase-fts.sql keep working.
     """
+    library_ids = [str(x) for x in (library_ids or []) if str(x)]
+    if not library_ids or not (query_text or "").strip():
+        return []
+
+    rpc_name = os.getenv("CHAT_FTS_RPC", "keyword_search_chunks_fts").strip() or "keyword_search_chunks_fts"
+    try:
+        resp = supabase.rpc(
+            rpc_name,
+            {
+                "p_library_ids": library_ids,
+                "p_query": query_text,
+                "p_match_count": max(20, int(top_k) * 4),
+            },
+        ).execute()
+        rows = resp.data or []
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            out.append(
+                {
+                    "chunk_id": r.get("chunk_id"),
+                    "doc_id": r.get("doc_id"),
+                    "library_id": r.get("library_id"),
+                    "page_start": r.get("page_start"),
+                    "page_end": r.get("page_end"),
+                    "text": r.get("text") or r.get("embedding_text"),
+                    "score": float(r.get("score") or 0.0),
+                }
+            )
+        if out:
+            return out
+    except Exception:
+        pass
+    # Fallback: the previous ILIKE scan (used until the FTS migration is applied).
+    return _keyword_search_ilike(organization_id, library_ids, query_text, top_k, cross_org)
+
+
+def _keyword_search_ilike(
+    organization_id: Optional[str],
+    library_ids: List[str],
+    query_text: str,
+    top_k: int = 8,
+    cross_org: bool = False,
+) -> List[Dict[str, Any]]:
+    """Legacy ILIKE lexical fallback. cross_org=True filters by library_id only."""
     library_ids = [str(x) for x in (library_ids or []) if str(x)]
     if not library_ids:
         return []
@@ -252,6 +314,89 @@ def retrieve_chunks(
         if query_text:
             return keyword_search_chunks(organization_id, library_ids, query_text, top_k=top_k, cross_org=cross_org)
         return []
+
+
+# ── Hybrid retrieval: RRF fusion + cross-encoder rerank ──────────────────────────────
+
+def rrf_fuse(ranked_lists: List[List[Dict[str, Any]]], k: int = 60, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Reciprocal Rank Fusion of several ranked chunk lists (e.g. vector + keyword).
+    score(d) = sum over lists of 1/(k + rank). Dedupes by chunk_id; keeps the first row seen."""
+    scores: Dict[str, float] = {}
+    best: Dict[str, Dict[str, Any]] = {}
+    for lst in ranked_lists:
+        for rank, row in enumerate(lst or []):
+            cid = str(row.get("chunk_id") or "")
+            if not cid:
+                continue
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
+            if cid not in best:
+                best[cid] = row
+    fused = sorted(best.values(), key=lambda r: scores.get(str(r.get("chunk_id")), 0.0), reverse=True)
+    for r in fused:
+        r["rrf_score"] = scores.get(str(r.get("chunk_id")), 0.0)
+    return fused[: int(top_k)] if top_k else fused
+
+
+_reranker = None
+
+
+def _get_reranker():
+    global _reranker
+    if _reranker is not None:
+        return _reranker
+    from sentence_transformers import CrossEncoder  # type: ignore
+
+    model_id = os.getenv("CHAT_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+    device = os.getenv("CHAT_RERANK_DEVICE", "").strip()
+    if not device:
+        try:
+            import torch
+
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            device = "cpu"
+    _reranker = CrossEncoder(model_id, device=device, max_length=512)
+    return _reranker
+
+
+def rerank_rows(query_text: str, rows: List[Dict[str, Any]], top_k: int) -> List[Dict[str, Any]]:
+    """Cross-encoder rerank (bge-reranker-v2-m3) of candidate rows. Gated by CHAT_ENABLE_RERANK.
+    Best-effort: on any failure (model missing, OOM) returns the input order truncated."""
+    if not rows:
+        return rows
+    if str(os.getenv("CHAT_ENABLE_RERANK", "1")).strip() in {"0", "false", "False"}:
+        return rows[: int(top_k)] if top_k else rows
+    cand = rows[: int(os.getenv("CHAT_RERANK_CANDIDATES", "100"))]
+    try:
+        ce = _get_reranker()
+        pairs = [(query_text, str(r.get("text") or "")[:1200]) for r in cand]
+        scores = ce.predict(pairs, show_progress_bar=False)
+        for r, s in zip(cand, scores):
+            r["rerank_score"] = float(s)
+        cand.sort(key=lambda r: r.get("rerank_score", 0.0), reverse=True)
+        return cand[: int(top_k)] if top_k else cand
+    except Exception:
+        return rows[: int(top_k)] if top_k else rows
+
+
+def hybrid_retrieve(
+    organization_id: Optional[str],
+    library_ids: List[str],
+    query_text: str,
+    query_vec: List[float],
+    top_k: int = 8,
+    cross_org: bool = False,
+) -> List[Dict[str, Any]]:
+    """Level-3 (vector) + Level-1 (FTS keyword) recall, fused with RRF, then cross-encoder
+    reranked to the final top_k. The single entry point the chat orchestrator should call."""
+    vec_k = max(int(top_k), int(os.getenv("CHAT_HYBRID_VEC_K", "40")))
+    kw_k = max(int(top_k), int(os.getenv("CHAT_HYBRID_KW_K", "40")))
+    vec = retrieve_chunks(organization_id, library_ids, query_vec, top_k=vec_k, cross_org=cross_org)
+    kw = keyword_search_chunks(organization_id, library_ids, query_text, top_k=kw_k, cross_org=cross_org)
+    fused = rrf_fuse([vec, kw], k=int(os.getenv("CHAT_RRF_K", "60")))
+    if not fused:
+        return (vec or kw)[: int(top_k)]
+    return rerank_rows(query_text, fused, top_k=top_k)
 
 
 def expand_neighbor_chunks(
