@@ -145,13 +145,18 @@ function DashboardPageInner() {
                 return;
             }
 
-            const orgList = memberships
+            // Dashboard shows only the orgs you OWN — teams you were merely invited to live in the
+            // Team tab / team chat, not the dashboard org switcher.
+            const ownedOrgs = memberships
+                .filter((m) => String((m as { role?: unknown }).role || "") === "owner")
                 .map((m) => m.organizations as unknown as Organization)
                 .filter(Boolean);
+            const orgList =
+                ownedOrgs.length > 0
+                    ? ownedOrgs
+                    : memberships.map((m) => m.organizations as unknown as Organization).filter(Boolean);
 
             setOrganizations(orgList);
-
-            // Get the first org (later can add org switcher)
             const orgData = orgList[0];
             setCurrentOrg(orgData);
 

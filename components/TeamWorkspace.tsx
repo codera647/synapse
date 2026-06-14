@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   FiUsers,
@@ -12,9 +12,11 @@ import {
   FiBox,
   FiUserPlus,
   FiClock,
+  FiChevronDown,
 } from "react-icons/fi";
 
 type OrgLite = { id: string; name: string };
+type TeamOrg = { id: string; name: string; role: string };
 type Member = { userId: string; role: string; email: string; name: string | null; avatarUrl: string | null };
 type SentInvite = { id: string; email: string; role: string; createdAt: string };
 type MyInvite = { id: string; orgId: string; orgName: string; role: string; invitedBy: string | null; token: string };
@@ -38,6 +40,10 @@ export default function TeamWorkspace({
   onLog?: LogFn;
 }) {
   const [me, setMe] = useState<{ id: string; email: string } | null>(null);
+  const [teams, setTeams] = useState<TeamOrg[]>([]);
+  const [teamId, setTeamId] = useState<string | null>(null);
+  const [teamMenuOpen, setTeamMenuOpen] = useState(false);
+  const teamMenuRef = useRef<HTMLDivElement | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [sentInvites, setSentInvites] = useState<SentInvite[]>([]);
   const [myInvites, setMyInvites] = useState<MyInvite[]>([]);
@@ -55,6 +61,49 @@ export default function TeamWorkspace({
     setNotice({ kind, text });
     window.setTimeout(() => setNotice((n) => (n?.text === text ? null : n)), 4000);
   };
+
+  // Teams you belong to (any org you're a member of). The Team screen operates on the SELECTED team
+  // — the same selection model as team chat — so sharing and chatting target the same org.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const uid = user?.id;
+      if (!uid) return;
+      const { data: mems } = await supabase
+        .from("organization_members")
+        .select("organization_id, role, organizations(id, name)")
+        .eq("user_id", uid);
+      const orgs: TeamOrg[] = ((mems as unknown as Array<Record<string, unknown>>) || [])
+        .map((m) => {
+          const o = pickOne(m.organizations as Record<string, unknown> | Record<string, unknown>[]);
+          return o ? { id: String(o.id), name: String(o.name || "Org"), role: String(m.role || "member") } : null;
+        })
+        .filter(Boolean) as TeamOrg[];
+      if (!alive) return;
+      setTeams(orgs);
+      setTeamId((prev) =>
+        prev && orgs.some((o) => o.id === prev)
+          ? prev
+          : organization?.id && orgs.some((o) => o.id === organization.id)
+            ? organization.id
+            : orgs[0]?.id ?? null,
+      );
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [supabase, organization?.id]);
+
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (teamMenuRef.current && !teamMenuRef.current.contains(e.target as Node)) setTeamMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,7 +131,7 @@ export default function TeamWorkspace({
         .eq("created_by_user_id", uid)
         .order("created_at", { ascending: false });
 
-      const orgId = organization?.id;
+      const orgId = teamId;
       const memP = orgId
         ? supabase
             .from("organization_members")
@@ -165,7 +214,7 @@ export default function TeamWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [supabase, organization?.id, onLog]);
+  }, [supabase, teamId, onLog]);
 
   useEffect(() => {
     void load();
@@ -177,7 +226,7 @@ export default function TeamWorkspace({
   // ── Actions ────────────────────────────────────────────────────────────────
   const invite = async () => {
     const email = inviteEmail.trim().toLowerCase();
-    if (!organization?.id || !me) return;
+    if (!teamId || !me) return;
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       flash("err", "Enter a valid email address.");
       return;
@@ -198,7 +247,7 @@ export default function TeamWorkspace({
       const res = await fetch("/api/team/invite", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ organization_id: organization.id, email }),
+        body: JSON.stringify({ organization_id: teamId, email }),
       });
       const j = (await res.json().catch(() => ({}))) as { error?: string; emailed?: boolean };
       if (!res.ok) {
@@ -272,7 +321,7 @@ export default function TeamWorkspace({
       await supabase
         .from("organization_members")
         .delete()
-        .eq("organization_id", organization.id)
+        .eq("organization_id", teamId)
         .eq("user_id", userId);
       await load();
     } finally {
@@ -281,11 +330,11 @@ export default function TeamWorkspace({
   };
 
   const shareLib = async (libraryId: string) => {
-    if (!organization?.id || !me) return;
+    if (!teamId || !me) return;
     setBusy(true);
     try {
       const { error } = await supabase.from("team_library_shares").insert({
-        organization_id: organization.id,
+        organization_id: teamId,
         library_id: libraryId,
         shared_by_user_id: me.id,
       });
@@ -309,6 +358,8 @@ export default function TeamWorkspace({
     }
   };
 
+  const selectedTeam = teams.find((t) => t.id === teamId) || null;
+
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="mx-auto w-full max-w-4xl">
@@ -316,10 +367,45 @@ export default function TeamWorkspace({
         <span className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow-lg shadow-violet-500/25">
           <FiUsers className="h-5 w-5 text-white" />
         </span>
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            <span className="gradient-text">{organization?.name || "Team"}</span>
-          </h1>
+        <div className="min-w-0">
+          {/* Team selector — pick which of your teams to manage (same selection as Team chat). */}
+          <div className="relative" ref={teamMenuRef}>
+            <button
+              type="button"
+              onClick={() => setTeamMenuOpen((v) => !v)}
+              className="flex items-center gap-2 rounded-lg px-1 -ml-1 hover:bg-white/5 transition-colors"
+              disabled={teams.length <= 1}
+            >
+              <span className="text-2xl font-bold tracking-tight gradient-text">{selectedTeam?.name || "Team"}</span>
+              {teams.length > 1 ? (
+                <FiChevronDown className={`h-4 w-4 text-white/40 transition-transform ${teamMenuOpen ? "rotate-180" : ""}`} />
+              ) : null}
+            </button>
+            {teamMenuOpen && teams.length > 1 ? (
+              <div className="surface-menu absolute left-0 top-10 z-30 w-60 rounded-xl p-1.5 shadow-2xl shadow-black/50">
+                <div className="px-2 py-1 text-[9px] uppercase tracking-wide text-white/35">Your teams</div>
+                {teams.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => {
+                      setTeamId(t.id);
+                      setTeamMenuOpen(false);
+                    }}
+                    className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${
+                      t.id === teamId ? "bg-violet-500/20 text-white" : "text-white/70 hover:bg-white/6"
+                    }`}
+                  >
+                    <span className="truncate">
+                      {t.name}
+                      {t.role === "owner" ? <span className="ml-1.5 text-[10px] text-violet-300/70">owner</span> : null}
+                    </span>
+                    {t.id === teamId ? <FiCheck className="h-3.5 w-3.5 shrink-0 text-violet-300" /> : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <p className="text-sm text-white/50">Invite teammates, share libraries, and chat together.</p>
         </div>
       </div>

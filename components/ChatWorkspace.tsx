@@ -133,6 +133,11 @@ export default function ChatWorkspace({
       const ids = ((shares as Array<{ library_id?: string }>) || [])
         .map((s) => String(s.library_id || ""))
         .filter(Boolean);
+      onLog?.({
+        level: "info",
+        message: `Team chat: ${ids.length} library(ies) shared into this team`,
+        details: { team: selectedTeamId },
+      });
       if (ids.length === 0) {
         setTeamLibraries([]);
         return;
@@ -142,6 +147,11 @@ export default function ChatWorkspace({
         .select("id, name, pipeline_status, created_by_user_id")
         .in("id", ids);
       const rows = (libs as Array<Record<string, unknown>>) || [];
+      onLog?.({
+        level: "info",
+        message: `Team chat: ${rows.length} shared library(ies) loaded`,
+        details: rows.map((l) => ({ name: l.name, pipeline_status: l.pipeline_status })),
+      });
       const ownerIds = Array.from(
         new Set(rows.map((l) => String(l.created_by_user_id || "")).filter(Boolean)),
       );
