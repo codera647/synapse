@@ -32,10 +32,20 @@ QUERY_CLASSES = (
 )
 
 
+def _clean_model_id(raw: Optional[str], default: str) -> str:
+    """Tolerate stray inline comments / spaces in env model values (a model ID never contains
+    whitespace), e.g. `CHAT_GPT_MODEL=gpt-5.5  # comment` -> `gpt-5.5`."""
+    s = (raw or "").strip()
+    if s.startswith("#"):
+        s = ""
+    s = s.split()[0] if s else ""
+    return s or default
+
+
 def _model_for(role_env: str) -> str:
     """Resolve the model for an agent role, falling back to the shared chat model."""
-    base = (os.getenv("CHAT_GPT_MODEL") or "gpt-5.5-2026-04-23").strip() or "gpt-5.5-2026-04-23"
-    return (os.getenv(role_env) or base).strip() or base
+    base = _clean_model_id(os.getenv("CHAT_GPT_MODEL"), "gpt-5.5-2026-04-23")
+    return _clean_model_id(os.getenv(role_env), base)
 
 
 def _json_object(text: str) -> Dict[str, Any]:

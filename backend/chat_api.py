@@ -104,8 +104,18 @@ def _get_openai_client():
     return OpenAI(api_key=api_key)
 
 
+def _clean_model_id(raw: Optional[str], default: str) -> str:
+    """Tolerate stray inline comments / spaces in env values (a model ID never contains
+    whitespace), e.g. `CHAT_GPT_MODEL=gpt-5.5  # comment` -> `gpt-5.5`."""
+    s = (raw or "").strip()
+    if s.startswith("#"):
+        s = ""
+    s = s.split()[0] if s else ""
+    return s or default
+
+
 def _gpt_model() -> str:
-    return (os.getenv("CHAT_GPT_MODEL") or "gpt-5.5-2026-04-23").strip() or "gpt-5.5-2026-04-23"
+    return _clean_model_id(os.getenv("CHAT_GPT_MODEL"), "gpt-5.5-2026-04-23")
 
 def _max_hops_cap() -> int:
     try:
