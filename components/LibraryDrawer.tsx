@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FiX, FiRefreshCcw, FiDatabase, FiLayers, FiTrash2 } from "react-icons/fi";
+import { FiX, FiRefreshCcw, FiDatabase, FiLayers, FiTrash2, FiAlertTriangle } from "react-icons/fi";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import PipelineStepper from "@/components/PipelineStepper";
 
@@ -40,6 +40,21 @@ function formatDate(value: string | null | undefined) {
 function pct(v: number | null | undefined) {
   if (typeof v !== "number") return 0;
   return Math.max(0, Math.min(100, v));
+}
+
+// The backend already writes friendly pipeline errors; this is a defensive map for any raw or
+// legacy messages so the user never sees a CUDA stack trace.
+function friendlyError(raw: string): string {
+  const s = (raw || "").toLowerCase();
+  if (s.includes("out of memory") || (s.includes("cuda") && s.includes("memory")))
+    return "Ran out of GPU memory on a processing stage. Lower that stage's workers in Settings → Processing, then click Resume — finished stages are kept.";
+  if (s.includes("rate limit") || s.includes("quota") || s.includes("429"))
+    return "The AI service was rate-limited or out of quota. Wait a moment, then click Resume to retry.";
+  if (s.includes("timeout") || s.includes("timed out") || s.includes("connection"))
+    return "A network/service timeout interrupted processing. Click Resume to retry.";
+  if (s.includes("api key") || s.includes("unauthorized") || s.includes("401"))
+    return "An API key was missing or invalid for a stage. Check the backend config, then Resume.";
+  return raw.length > 300 ? raw.slice(0, 300) + "…" : raw;
 }
 
 function StatCard({
@@ -189,8 +204,9 @@ export default function LibraryDrawer({ open, onClose, library, organizationId, 
                 <span className="text-[11px] text-gray-500">{Math.round(pct(library.pipeline_progress_percent))}%</span>
               </div>
               {library.pipeline_error ? (
-                <div className="mt-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-                  {library.pipeline_error}
+                <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                  <FiAlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{friendlyError(library.pipeline_error)}</span>
                 </div>
               ) : null}
             </div>

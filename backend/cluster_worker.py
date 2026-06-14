@@ -576,6 +576,9 @@ def run_clustering_stage_job(stage_job: dict):
         _update_library_progress(library_id)
         _maybe_finalize_pipeline(library_id)
     except Exception as exc:
+        from errors import friendly_error
+
+        _emsg = friendly_error(exc)
         _sb_execute(
             supabase.table(run_table).upsert(
                 {
@@ -584,14 +587,14 @@ def run_clustering_stage_job(stage_job: dict):
                     "status": "failed",
                     "finished_at": now_iso(),
                     "updated_at": now_iso(),
-                    "last_error": str(exc),
+                    "last_error": _emsg,
                 },
                 on_conflict="library_id",
             ),
             context=f"{run_table}.upsert(failed)",
         )
         _sb_execute(
-            supabase.table("batch_stage_jobs").update({"status": "failed", "last_error": str(exc)}).eq("id", job_id),
+            supabase.table("batch_stage_jobs").update({"status": "failed", "last_error": _emsg}).eq("id", job_id),
             context="batch_stage_jobs.update(clustering.failed)",
         )
         _sb_execute(
@@ -599,7 +602,7 @@ def run_clustering_stage_job(stage_job: dict):
                 {
                     "pipeline_status": "failed",
                     "pipeline_stage": "clustering",
-                    "pipeline_error": str(exc),
+                    "pipeline_error": _emsg,
                     "status": "error",
                 }
             ).eq("id", library_id),

@@ -833,9 +833,10 @@ def run_layout_stage_job(stage_job):
         _maybe_finalize_pipeline(library_id)
 
     except Exception as exc:
+        from errors import friendly_error
         _sb_execute(
             supabase.table("batch_stage_jobs").update(
-                {"status": "failed", "last_error": str(exc), "finished_at": now_iso()}
+                {"status": "failed", "last_error": friendly_error(exc), "finished_at": now_iso()}
             ).eq("id", job_id),
             context="batch_stage_jobs.update(failed)",
         )
@@ -844,7 +845,7 @@ def run_layout_stage_job(stage_job):
                 {
                     "pipeline_status": "failed",
                     "pipeline_stage": "layout_parser",
-                    "pipeline_error": str(exc),
+                    "pipeline_error": friendly_error(exc),
                     "status": "error",
                 }
             ).eq("id", library_id),
