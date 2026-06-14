@@ -70,6 +70,7 @@ type LibraryLite = {
   name: string;
   pipeline_status?: string | null;
   pipeline_progress_percent?: number | null;
+  ownerLabel?: string | null; // team mode: "by Alice" / "by you"
 };
 
 type OrgLite = { id: string; name: string };
@@ -339,12 +340,14 @@ export default function ChatPanel({
     const { data: userRes } = await supabase.auth.getUser();
     const uid = userRes?.user?.id;
     if (!uid) return;
-    // Personal = your own private threads; Team = the team's shared threads (all members).
+    // Personal = your own private threads across ALL your orgs (not tied to a single org).
+    // Team = the selected team's shared threads (all members).
     let qb = supabase
       .from("chat_threads")
-      .select("id, title, updated_at, selected_library_ids, parent_thread_id, root_thread_id")
-      .eq("organization_id", organization.id);
-    qb = isTeam ? qb.eq("is_team", true) : qb.eq("created_by_user_id", uid).eq("is_team", false);
+      .select("id, title, updated_at, selected_library_ids, parent_thread_id, root_thread_id");
+    qb = isTeam
+      ? qb.eq("organization_id", organization.id).eq("is_team", true)
+      : qb.eq("created_by_user_id", uid).eq("is_team", false);
     const { data, error } = await qb.order("updated_at", { ascending: false }).limit(80);
 
     if (error) {
@@ -1483,9 +1486,12 @@ export default function ChatPanel({
                           checked ? "bg-white/8 text-white" : "text-white/70 hover:bg-white/6"
                         }`}
                       >
-                        <span className="truncate flex items-center gap-2">
-                          <FiBookOpen className={`h-3.5 w-3.5 ${checked ? "text-violet-300" : "text-white/35"}`} />
-                          {l.name}
+                        <span className="min-w-0 flex items-center gap-2">
+                          <FiBookOpen className={`h-3.5 w-3.5 shrink-0 ${checked ? "text-violet-300" : "text-white/35"}`} />
+                          <span className="truncate">{l.name}</span>
+                          {l.ownerLabel ? (
+                            <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[10px] text-white/45">{l.ownerLabel}</span>
+                          ) : null}
                         </span>
                         {checked ? <FiCheck className="h-4 w-4 text-violet-300 shrink-0" /> : null}
                       </button>
