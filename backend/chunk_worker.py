@@ -449,11 +449,12 @@ def _contextualize_chunk(doc_anchor: str, chunk_text: str) -> str:
             "Give a short, single-sentence context that situates this chunk within the document "
             "to improve search retrieval. Answer with ONLY the sentence."
         )
+        from llm_compat import completion_kwargs
+
         resp = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=80,
+            **completion_kwargs(model, max_tokens=80, temperature=0.0),
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception:

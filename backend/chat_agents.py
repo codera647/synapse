@@ -20,6 +20,8 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from llm_compat import completion_kwargs
+
 
 # Query classes, following the Loong taxonomy adapted to Synapse.
 QUERY_CLASSES = (
@@ -133,8 +135,7 @@ def plan_query(client, message: str, convo: str = "", model: Optional[str] = Non
                 {"role": "system", "content": _PLANNER_SYSTEM},
                 {"role": "user", "content": user},
             ],
-            temperature=0.1,
-            max_tokens=300,
+            **completion_kwargs(mdl, max_tokens=300, temperature=0.1),
         )
         j = _json_object(out.choices[0].message.content or "")
     except Exception:
@@ -233,8 +234,7 @@ def extract_notes(
                 {"role": "system", "content": _EXTRACTOR_SYSTEM},
                 {"role": "user", "content": user},
             ],
-            temperature=0.1,
-            max_tokens=900,
+            **completion_kwargs(mdl, max_tokens=900, temperature=0.1),
         )
         j = _json_object(out.choices[0].message.content or "")
     except Exception:
@@ -335,8 +335,7 @@ def critique_answer(
                 {"role": "system", "content": _CRITIC_SYSTEM},
                 {"role": "user", "content": user},
             ],
-            temperature=0.1,
-            max_tokens=400,
+            **completion_kwargs(mdl, max_tokens=400, temperature=0.1),
         )
         j = _json_object(out.choices[0].message.content or "")
     except Exception:
@@ -382,8 +381,7 @@ def grade_retrieval(client, query: str, evidence: str, *, model: Optional[str] =
         out = client.chat.completions.create(
             model=mdl,
             messages=[{"role": "system", "content": _GRADE_SYSTEM}, {"role": "user", "content": user}],
-            temperature=0.0,
-            max_tokens=200,
+            **completion_kwargs(mdl, max_tokens=200, temperature=0.0),
         )
         j = _json_object(out.choices[0].message.content or "")
     except Exception:
@@ -421,8 +419,7 @@ def verify_faithfulness(client, answer: str, evidence: str, *, model: Optional[s
         out = client.chat.completions.create(
             model=mdl,
             messages=[{"role": "system", "content": _FAITHFUL_SYSTEM}, {"role": "user", "content": user}],
-            temperature=0.0,
-            max_tokens=400,
+            **completion_kwargs(mdl, max_tokens=400, temperature=0.0),
         )
         j = _json_object(out.choices[0].message.content or "")
     except Exception:

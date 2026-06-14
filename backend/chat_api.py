@@ -27,6 +27,7 @@ from chat_agents import (
     plan_query,
     verify_faithfulness,
 )
+from llm_compat import completion_kwargs
 
 load_env()
 
@@ -465,8 +466,7 @@ def _compact_impl(req: CompactRequest):
     out = client.chat.completions.create(
         model=model,
         messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
-        temperature=0.2,
-        max_tokens=320,
+        **completion_kwargs(model, max_tokens=320, temperature=0.2),
     )
     content = (out.choices[0].message.content or "").strip()
     j = _json_extract(content)
@@ -682,8 +682,7 @@ def _chat_impl(req: ChatRequest):
         ans = client.chat.completions.create(
             model=model,
             messages=_ungrounded_answer_prompt(req.message, convo),
-            temperature=0.3,
-            max_tokens=max_tokens,
+            **completion_kwargs(model, max_tokens=max_tokens, temperature=0.3),
         )
         answer = (ans.choices[0].message.content or "").strip()
         return {
@@ -865,8 +864,7 @@ def _chat_impl(req: ChatRequest):
                     detail=mode_detail, citations=citations or None,
                     personalization=persona_block,
                 ),
-                temperature=0.2,
-                max_tokens=answer_max_tokens,
+                **completion_kwargs(model, max_tokens=answer_max_tokens, temperature=0.2),
             )
             return (out.choices[0].message.content or "").strip()
 
@@ -946,8 +944,7 @@ def _chat_impl(req: ChatRequest):
                                 "content": f"UNSUPPORTED_CLAIMS:\n{uns}\n\nANSWER:\n{answer}\n\nEVIDENCE:\n{context_doc[:8000]}",
                             },
                         ],
-                        temperature=0.0,
-                        max_tokens=answer_max_tokens,
+                        **completion_kwargs(model, max_tokens=answer_max_tokens, temperature=0.0),
                     )
                     revised = (corr.choices[0].message.content or "").strip()
                     if revised:
