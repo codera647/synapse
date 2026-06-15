@@ -2,7 +2,7 @@
 # Secrets come from the backend env (/etc/synapse/backend.env): SUPABASE_URL,
 # SUPABASE_SERVICE_ROLE_KEY, R2_*, OPENAI_API_KEY.
 
-run_id: demo
+run_id: real50                       # fresh run dir (keeps the earlier ocr `demo` run separate)
 backend_url: http://127.0.0.1:8000   # FastAPI backend (workers must be running for ingest)
 
 # ---- DOUBLE-BENCH dataset (Episoode/Double-Bench on HuggingFace) --------------------------
