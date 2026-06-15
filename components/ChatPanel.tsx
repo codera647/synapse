@@ -263,6 +263,11 @@ export default function ChatPanel({
   const createdLocallyRef = useRef<Set<string>>(new Set());
 
   const [prompt, setPrompt] = useState("");
+  // Whole-library "/library" command: which connected libraries to answer over with the whole
+  // (map-reduce) context. Per-message — cleared after each send.
+  const [wholeLibIds, setWholeLibIds] = useState<string[]>([]);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerMirrorRef = useRef<HTMLDivElement | null>(null);
   const [thinking, setThinking] = useState(false);
   // True while context-window auto-compaction is summarizing a full chat and spawning the
   // linked continuation thread — drives the "starting a linked chat…" loading banner.
@@ -278,12 +283,57 @@ export default function ChatPanel({
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [messagesByThread, setMessagesByThread] = useState<Record<string, ChatMessage[]>>({});
 
-  const canSend = prompt.trim().length > 0 && !thinking;
-
   // Only expose libraries that are fully processed.
   const readyLibraries = useMemo(() => {
     return libraries.filter(isLibraryReady).sort((a, b) => a.name.localeCompare(b.name));
   }, [libraries]);
+
+  // Libraries currently connected to this chat (selected) and ready — the candidates for /library.
+  const connectedLibraries = useMemo(
+    () => readyLibraries.filter((l) => selectedLibraryIds.includes(l.id)),
+    [readyLibraries, selectedLibraryIds]
+  );
+  // "/library" (any case) anywhere in the draft turns on whole-library mode for this message.
+  const hasLibCmd = /\/library\b/i.test(prompt);
+  // With multiple libraries connected, the user must pick which one(s) before sending.
+  const needsLibPick = hasLibCmd && connectedLibraries.length > 1 && wholeLibIds.length === 0;
+  const canSend = prompt.trim().length > 0 && !thinking && !needsLibPick;
+
+  // Keep the whole-library selection in sync with the "/library" command in the draft:
+  // remove it when the command is gone; auto-resolve to the only library when just one is connected.
+  useEffect(() => {
+    if (!hasLibCmd) {
+      setWholeLibIds((p) => (p.length ? [] : p));
+      return;
+    }
+    if (connectedLibraries.length === 1) {
+      const only = connectedLibraries[0].id;
+      setWholeLibIds((p) => (p.length === 1 && p[0] === only ? p : [only]));
+    }
+  }, [hasLibCmd, connectedLibraries]);
+
+  // Render the composer text for the highlight overlay, wrapping each "/library" token in a violet
+  // chip. The textarea above it is transparent (caret only), so this is what the user actually sees.
+  const renderComposerHighlight = (text: string): ReactNode => {
+    if (!text) return null;
+    const re = /\/library\b/gi;
+    const out: ReactNode[] = [];
+    let last = 0;
+    let m: RegExpExecArray | null;
+    let k = 0;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) out.push(<span key={k++}>{text.slice(last, m.index)}</span>);
+      out.push(
+        <span key={k++} className="rounded bg-violet-500/30 px-0.5 font-medium text-violet-200">
+          {m[0]}
+        </span>
+      );
+      last = m.index + m[0].length;
+    }
+    // Trailing zero-width char keeps the final (possibly empty) line height stable for the caret.
+    out.push(<span key={k++}>{text.slice(last) || "​"}</span>);
+    return out;
+  };
 
   // Libraries that are present (e.g. shared into the team) but NOT done processing yet —
   // shown disabled with their progress so a shared-but-unprocessed library doesn't just vanish.
@@ -849,7 +899,23 @@ export default function ChatPanel({
     abortRef.current = ac;
 
     const userText = sourceText.trim();
-    if (!overrideText) setPrompt("");
+    // Whole-library "/library" command (per-message). Resolve the target libraries now, and send a
+    // cleaned message (without the "/library" token) to the backend.
+    const wholeMode = /\/library\b/i.test(userText);
+    const wholeIds = wholeMode
+      ? wholeLibIds.length
+        ? wholeLibIds
+        : connectedLibraries.length === 1
+        ? [connectedLibraries[0].id]
+        : selectedLibraryIds
+      : [];
+    const backendMessage = wholeMode
+      ? userText.replace(/\/library\b/gi, " ").replace(/\s+/g, " ").trim() || "Summarize this library."
+      : userText;
+    if (!overrideText) {
+      setPrompt("");
+      setWholeLibIds([]);
+    }
 
     // Add the user message in the SAME synchronous batch as setPrompt("") — i.e. BEFORE any
     // await below — so the context ring doesn't briefly dip. Clearing the draft removes its
@@ -919,7 +985,9 @@ export default function ChatPanel({
           body: JSON.stringify({
             organization_id: organization?.id ?? null,
             library_ids: selectedLibraryIds,
-            message: userText,
+            message: backendMessage,
+            whole_library: wholeMode,
+            whole_library_ids: wholeIds,
             thinking_mode: thinkingMode,
             cross_org: isTeam,
             personalization: personalization ?? undefined,
@@ -1670,6 +1738,60 @@ export default function ChatPanel({
             </div>
           )}
 
+          {hasLibCmd && (
+            <div className="mx-auto mb-2 w-full max-w-3xl">
+              <div className="rounded-xl border border-violet-400/30 bg-violet-500/10 px-3 py-2">
+                <div className="flex items-center gap-2 text-[11px]">
+                  <FiBookOpen className="h-3.5 w-3.5 shrink-0 text-violet-300" />
+                  <span className="font-medium text-violet-100">Whole-library mode</span>
+                  <span className="text-white/45">— answering from the entire library, not just the top matches.</span>
+                </div>
+                {connectedLibraries.length === 0 ? (
+                  <div className="mt-1.5 text-[11px] text-amber-300/80">
+                    Connect a processed library to this chat first (the + button).
+                  </div>
+                ) : connectedLibraries.length === 1 ? (
+                  <div className="mt-1.5 text-[11px] text-white/55">
+                    Using <span className="font-medium text-violet-200">{connectedLibraries[0].name}</span>.
+                  </div>
+                ) : (
+                  <div className="mt-2">
+                    <div className="mb-1 text-[10px] uppercase tracking-wide text-white/40">
+                      Pick which library / libraries to use
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {connectedLibraries.map((l) => {
+                        const on = wholeLibIds.includes(l.id);
+                        return (
+                          <button
+                            key={l.id}
+                            type="button"
+                            onClick={() =>
+                              setWholeLibIds((p) => (on ? p.filter((x) => x !== l.id) : [...p, l.id]))
+                            }
+                            className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                              on
+                                ? "border-violet-400/50 bg-violet-500/25 text-violet-100"
+                                : "border-white/12 text-white/60 hover:border-white/25 hover:text-white"
+                            }`}
+                          >
+                            {on ? <FiCheck className="h-3 w-3" /> : null}
+                            {l.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {needsLibPick ? (
+                      <div className="mt-1.5 text-[10px] text-amber-300/80">
+                        Choose at least one library to send.
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="mx-auto w-full max-w-3xl">
             <div className="flex items-end gap-2 rounded-2xl glass-strong glass-hi px-3 py-2.5 transition-all focus-within:border-violet-400/40">
               <button
@@ -1727,20 +1849,36 @@ export default function ChatPanel({
                 )}
               </div>
 
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void send();
-                  }
-                }}
-                rows={1}
-                placeholder={readyLibraries.length > 0 ? "Ask anything across your libraries…" : "Process a library to start chatting…"}
-                className="synapse-scroll min-h-[2.25rem] max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm text-white placeholder:text-white/40 outline-none"
-                disabled={readyLibraries.length === 0}
-              />
+              {/* Highlight overlay: a mirror div renders the text with "/library" colored; the
+                  textarea on top is transparent (caret only) and scroll-synced to the mirror. */}
+              <div className="relative flex-1">
+                <div
+                  ref={composerMirrorRef}
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 max-h-40 overflow-hidden whitespace-pre-wrap break-words px-0 py-1.5 text-sm leading-normal text-white"
+                >
+                  {renderComposerHighlight(prompt)}
+                </div>
+                <textarea
+                  ref={composerRef}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onScroll={(e) => {
+                    if (composerMirrorRef.current)
+                      composerMirrorRef.current.scrollTop = (e.target as HTMLTextAreaElement).scrollTop;
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void send();
+                    }
+                  }}
+                  rows={1}
+                  placeholder={readyLibraries.length > 0 ? "Ask anything across your libraries…  (type /library to use the whole library)" : "Process a library to start chatting…"}
+                  className="synapse-scroll relative min-h-[2.25rem] max-h-40 w-full resize-none bg-transparent px-0 py-1.5 text-sm leading-normal text-transparent caret-violet-300 placeholder:text-white/40 outline-none"
+                  disabled={readyLibraries.length === 0}
+                />
+              </div>
 
               {readyLibraries.length > 0 && (
                 <ContextMeter used={contextUsedTokens} budget={contextBudgetTokens} />

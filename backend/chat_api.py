@@ -4,6 +4,7 @@ import traceback
 import re
 import hashlib
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
 from env_bootstrap import load_env
@@ -77,6 +78,11 @@ class ChatRequest(BaseModel):
     cross_org: bool = False
     # User personalization (identity + tone presets) — shapes answer STYLE only, never facts.
     personalization: Optional[Dict[str, Any]] = None
+    # Whole-library mode (the "/library" command): answer over the ENTIRE content of the chosen
+    # libraries via map-reduce (summarize each doc, then combine) instead of top-k retrieval.
+    # Per-message: the frontend sets these only on the message that contains /library.
+    whole_library: bool = False
+    whole_library_ids: List[str] = Field(default_factory=list)
     thread_summary: Optional[str] = None
     history: Optional[List[Dict[str, str]]] = None
     client_request_id: Optional[str] = None
@@ -620,6 +626,214 @@ def _build_sources_from(
     return sources
 
 
+def _approx_tokens(text: str) -> int:
+    return max(1, len(text or "") // 4)
+
+
+def _fetch_library_docs(lib_ids: List[str], max_docs: int, max_chunks_per_doc: int):
+    """Pull every chunk for the given libraries and group them into per-document text, ordered by
+    chunk_index. Returns (docs, truncated) where docs = [{doc_id, text, chunk_id, page_start}] and
+    `truncated` flags whether we capped docs/chunks (surfaced to the user — no silent caps)."""
+    from chat_runtime import supabase as _sb
+
+    rows: List[Dict[str, Any]] = []
+    page_size = 1000
+    offset = 0
+    hard_cap = max(1, int(os.getenv("WHOLE_LIB_MAX_ROWS", "20000")))
+    while True:
+        res = (
+            _sb.table("chunk_embeddings")
+            .select("chunk_id, doc_id, library_id, chunk_index, page_start, text, embedding_text")
+            .in_("library_id", lib_ids)
+            .order("doc_id")
+            .order("chunk_index")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        batch = res.data or []
+        rows.extend(batch)
+        if len(batch) < page_size or len(rows) >= hard_cap:
+            break
+        offset += page_size
+
+    by_doc: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        by_doc.setdefault(str(r.get("doc_id") or ""), []).append(r)
+
+    truncated = False
+    doc_ids = list(by_doc.keys())
+    if len(doc_ids) > max_docs:
+        truncated = True
+        doc_ids = doc_ids[:max_docs]
+
+    docs: List[Dict[str, Any]] = []
+    for did in doc_ids:
+        chunks = sorted(by_doc[did], key=lambda c: int(c.get("chunk_index") or 0))
+        if len(chunks) > max_chunks_per_doc:
+            truncated = True
+            chunks = chunks[:max_chunks_per_doc]
+        text = "\n\n".join((c.get("text") or c.get("embedding_text") or "").strip() for c in chunks).strip()
+        if not text:
+            continue
+        first = chunks[0]
+        docs.append(
+            {
+                "doc_id": did,
+                "library_id": first.get("library_id"),
+                "chunk_id": first.get("chunk_id"),
+                "page_start": first.get("page_start"),
+                "text": text,
+            }
+        )
+    return docs, truncated
+
+
+def _whole_library_impl(req: ChatRequest):
+    """Whole-library answer via map-reduce (the "/library" command).
+
+    MAP:    summarize each document (windowed if large) with the user's request in view.
+    REDUCE: combine the per-doc summaries into one grounded answer (summary / list / compare / …).
+
+    Returns the same response contract as _chat_impl (answer/sources/followups/*_hash).
+    """
+    server_prompt_hash = hashlib.sha1((req.message or "").strip().encode("utf-8")).hexdigest()
+    rid = req.client_request_id
+    client = _get_openai_client()
+    model = _gpt_model()
+    persona_block = _personalization_block(req.personalization)
+
+    # Only libraries the user explicitly chose with /library, intersected with what's connected.
+    chosen = [l for l in (req.whole_library_ids or []) if l in set(req.library_ids)]
+    if not chosen:
+        chosen = list(req.library_ids)
+    if not chosen:
+        raise HTTPException(status_code=400, detail="Select at least one library for whole-library mode.")
+
+    max_docs = max(1, int(os.getenv("WHOLE_LIB_MAX_DOCS", "60")))
+    max_chunks_per_doc = max(1, int(os.getenv("WHOLE_LIB_MAX_CHUNKS_PER_DOC", "400")))
+    map_tokens = int(os.getenv("WHOLE_LIB_MAP_TOKENS", "420"))
+    win_tokens = int(os.getenv("WHOLE_LIB_WINDOW_TOKENS", "6000"))
+    reduce_tokens = int(os.getenv("WHOLE_LIB_REDUCE_TOKENS", "2200"))
+
+    _set_progress(rid, "Loading the whole library")
+    docs, truncated = _fetch_library_docs(chosen, max_docs, max_chunks_per_doc)
+    if not docs:
+        return {
+            "answer": "I couldn't find any processed content in the selected library. Make sure it finished processing, then try again.",
+            "sources": [],
+            "followups": [],
+            "query_class": "WHOLE_LIBRARY",
+            "client_request_id": req.client_request_id,
+            "client_prompt_hash": req.client_prompt_hash,
+            "server_prompt_hash": server_prompt_hash,
+        }
+
+    meta = hydrate_doc_titles([d["doc_id"] for d in docs])
+
+    def _summarize_doc(doc: Dict[str, Any]) -> str:
+        title = (meta.get(doc["doc_id"]) or {}).get("doc_title") or "Untitled"
+        text = doc["text"]
+        # Window very large docs so each MAP call stays within the model's context.
+        win_chars = win_tokens * 4
+        windows = [text[i : i + win_chars] for i in range(0, len(text), win_chars)] or [text]
+        partials: List[str] = []
+        for wi, w in enumerate(windows[: int(os.getenv("WHOLE_LIB_MAX_WINDOWS", "8"))]):
+            msgs = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are summarizing one document so it can be combined with others to answer a "
+                        "user's request about an entire library. Extract the key points, facts, entities, "
+                        "and conclusions FAITHFULLY — do not invent. Be compact and information-dense."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"User request: {req.message}\n\n"
+                        f"Document: {title}"
+                        + (f" (part {wi + 1}/{len(windows)})" if len(windows) > 1 else "")
+                        + f"\n\n---\n{w}\n---\n\nWrite a faithful, compact summary of THIS document."
+                    ),
+                },
+            ]
+            try:
+                r = client.chat.completions.create(
+                    model=model,
+                    messages=msgs,
+                    **completion_kwargs(model, max_tokens=map_tokens, temperature=0.2),
+                )
+                partials.append((r.choices[0].message.content or "").strip())
+            except Exception as exc:
+                partials.append(f"(summary unavailable: {exc})")
+        return "\n".join(p for p in partials if p).strip()
+
+    _set_progress(rid, f"Reading {len(docs)} documents")
+    summaries: List[Dict[str, Any]] = []
+    max_workers = max(1, int(os.getenv("WHOLE_LIB_MAP_CONCURRENCY", "6")))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = {ex.submit(_summarize_doc, d): d for d in docs}
+        for fut in as_completed(futs):
+            d = futs[fut]
+            try:
+                s = fut.result()
+            except Exception:
+                s = ""
+            if s:
+                summaries.append({"doc": d, "summary": s})
+
+    # Stable order by doc title for a readable combined context.
+    summaries.sort(key=lambda x: ((meta.get(x["doc"]["doc_id"]) or {}).get("doc_title") or "").lower())
+
+    _set_progress(rid, "Composing the answer")
+    combined = "\n\n".join(
+        f"[{i + 1}] {(meta.get(s['doc']['doc_id']) or {}).get('doc_title') or 'Untitled'}\n{s['summary']}"
+        for i, s in enumerate(summaries)
+    )
+    reduce_msgs = [
+        {
+            "role": "system",
+            "content": (
+                "You are answering a user's request using summaries of EVERY document in their selected "
+                "library/libraries. Base your answer ONLY on the provided summaries; do not invent facts. "
+                "When the user asks to summarize, give a well-structured overview that spans the whole "
+                "library (themes, key documents, notable findings). Reference documents by their titles. "
+                + (persona_block or "")
+            ).strip(),
+        },
+        {
+            "role": "user",
+            "content": f"Request: {req.message}\n\nDocument summaries ({len(summaries)} docs):\n\n{combined}",
+        },
+    ]
+    final = client.chat.completions.create(
+        model=model,
+        messages=reduce_msgs,
+        **completion_kwargs(model, max_tokens=reduce_tokens, temperature=0.3),
+    )
+    answer = (final.choices[0].message.content or "").strip()
+    if truncated:
+        answer += (
+            f"\n\n_Note: this covered the first {len(docs)} documents of the library "
+            "(capped for performance). Ask about a specific document for full detail._"
+        )
+
+    sources = _build_sources_from([s["doc"] for s in summaries], meta, limit=30)
+    _clear_progress(rid)
+    return {
+        "answer": answer,
+        "sources": sources,
+        "visuals": [],
+        "citations": [],
+        "followups": [],
+        "query_class": "WHOLE_LIBRARY",
+        "thinking_mode": (req.thinking_mode or "medium"),
+        "client_request_id": req.client_request_id,
+        "client_prompt_hash": req.client_prompt_hash,
+        "server_prompt_hash": server_prompt_hash,
+    }
+
+
 def _chat_impl(req: ChatRequest):
     """
     Multi-agent retrieval pipeline (Phase 1).
@@ -639,6 +853,11 @@ def _chat_impl(req: ChatRequest):
         raise HTTPException(status_code=400, detail="Missing organization_id or message.")
     if not req.library_ids:
         raise HTTPException(status_code=400, detail="Select at least one processed library.")
+
+    # Whole-library mode (the "/library" command): answer over the entire library via map-reduce
+    # instead of top-k retrieval. Handled by a dedicated path that returns the same contract.
+    if req.whole_library:
+        return _whole_library_impl(req)
 
     top_k = max(3, min(int(req.top_k or 10), _max_topk_cap()))
     max_hops = max(0, min(int(req.max_hops or 2), _max_hops_cap()))
