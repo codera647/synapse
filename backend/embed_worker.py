@@ -1,5 +1,6 @@
 import os
 import json
+import base64
 import random
 import time
 from datetime import datetime, timezone
@@ -136,6 +137,91 @@ def _cancel_queued_stage_jobs_for_library(library_id: str, reason: str, exclude_
     if exclude_job_id:
         q = q.neq("id", exclude_job_id)
     _sb_execute(q, context="batch_stage_jobs.update(cancel_queued_for_library)")
+
+
+# ── WAF-resilient embedding writes ───────────────────────────────────────────────────
+# Supabase's REST API is fronted by Cloudflare. A chunk whose text matches a WAF attack
+# pattern (code/HTML/SQL — common for code files) makes Cloudflare 403 the whole POST with
+# an HTML page, so the batch fails forever (the same body always re-trips the rule). When we
+# detect that, we binary-split the batch to isolate the offending row, then send its text
+# fields base64-encoded through an RPC the WAF can't pattern-match (decoded server-side, so
+# FTS/tsv stay correct). See docs/supabase-chunk-text-b64.sql.
+
+_B64_TEXT_FIELDS = ("text", "embedding_text", "context_prefix", "section_heading", "locator")
+
+
+def _looks_like_waf_block(exc: Exception) -> bool:
+    m = (str(exc) or "").lower()
+    return (
+        "json could not be generated" in m
+        or "<!doctype html" in m
+        or "<html" in m
+        or "no-js ie6 oldie" in m
+        or "cloudflare" in m
+        or "access denied" in m
+        or "just a moment" in m
+        or "attention required" in m
+    )
+
+
+def _upsert_one_via_b64(table_name: str, row: dict, attempts: int) -> None:
+    """Single row the WAF keeps blocking: insert it with the text fields blanked (no attack
+    patterns in the body), then fill the real text via the base64 RPC."""
+    safe = dict(row)
+    encoded: dict = {}
+    for f in _B64_TEXT_FIELDS:
+        v = safe.get(f)
+        if v:
+            encoded[f] = base64.b64encode(str(v).encode("utf-8")).decode("ascii")
+            # Blank NOT NULL text columns to "", nullable ones to None, so the body is clean.
+            safe[f] = "" if f in ("text", "embedding_text") else None
+    _sb_execute(
+        supabase.table(table_name).upsert(safe, on_conflict="chunk_id"),
+        context=f"{table_name}.upsert(blanked)",
+        max_attempts=attempts,
+    )
+    if encoded:
+        _sb_execute(
+            supabase.rpc(
+                "set_chunk_text_b64",
+                {
+                    "p_chunk_id": str(row.get("chunk_id")),
+                    "p_text_b64": encoded.get("text"),
+                    "p_embedding_text_b64": encoded.get("embedding_text"),
+                    "p_context_prefix_b64": encoded.get("context_prefix"),
+                    "p_section_heading_b64": encoded.get("section_heading"),
+                    "p_locator_b64": encoded.get("locator"),
+                },
+            ),
+            context="rpc.set_chunk_text_b64",
+            max_attempts=attempts,
+        )
+        print(f"[embed] WAF-blocked chunk {row.get('chunk_id')} written via base64 RPC fallback")
+
+
+def _upsert_embeddings_resilient(table_name: str, rows: list, attempts: int, _splitting: bool = False) -> None:
+    if not rows:
+        return
+    # Full retries on the first try (handles transient load blocks); once we KNOW it's a content
+    # block we're splitting, fail fast (2 attempts) so isolation stays quick.
+    use_attempts = 2 if _splitting else attempts
+    try:
+        _sb_execute(
+            supabase.table(table_name).upsert(rows, on_conflict="chunk_id"),
+            context=f"{table_name}.upsert",
+            max_attempts=use_attempts,
+        )
+        return
+    except Exception as exc:
+        if not _looks_like_waf_block(exc):
+            raise
+    # WAF block: isolate the offending row(s) and use the base64 path for them.
+    if len(rows) > 1:
+        mid = len(rows) // 2
+        _upsert_embeddings_resilient(table_name, rows[:mid], attempts, _splitting=True)
+        _upsert_embeddings_resilient(table_name, rows[mid:], attempts, _splitting=True)
+        return
+    _upsert_one_via_b64(table_name, rows[0], attempts)
 
 
 def fetch_r2_bytes(key: str) -> bytes:
@@ -538,11 +624,7 @@ def run_embedding_stage_job(stage_job: dict):
                 upsert_attempts = int(os.getenv("EMBED_UPSERT_RETRIES", "10"))
                 for i in range(0, len(rows), chunk_size):
                     part = rows[i : i + chunk_size]
-                    _sb_execute(
-                        supabase.table(table_name).upsert(part, on_conflict="chunk_id"),
-                        context=f"{table_name}.upsert",
-                        max_attempts=upsert_attempts,
-                    )
+                    _upsert_embeddings_resilient(table_name, part, upsert_attempts)
                 inserted_total += len(rows)
 
             current += 1
