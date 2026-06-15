@@ -27,7 +27,7 @@ export default function DashboardSidebar({
     }, [searchParams]);
 
     return (
-        <aside className="group flex flex-col h-[calc(100vh-56px)] mt-14 fixed left-0 top-0 z-20">
+        <aside className="group flex flex-col h-[calc(100vh-3.5rem)] mt-14 fixed left-0 top-0 z-20">
             {/* main rail */}
             <div className="flex-1 flex flex-col gap-1 px-2.5 pt-4 pb-4 w-16 group-hover:w-60 transition-[width] duration-300 ease-out border-r border-white/10 surface-app backdrop-blur-xl overflow-hidden">
                 {menuItems.map((item) => {

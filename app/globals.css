@@ -55,6 +55,11 @@ html[data-theme="dark"] {
 
 html {
   scroll-behavior: smooth;
+  /* Global UI scale: render the app as if the browser were at ~80% zoom, while the user stays at
+     100%. Tailwind's spacing/typography are rem-based, so shrinking the root font scales the whole
+     UI down. Unlike CSS `zoom`, this keeps viewport-height layouts (100vh / min-h-screen) filling
+     the screen — they just hold denser content. Change this single value to tune the scale. */
+  font-size: 80%;
 }
 
 body {

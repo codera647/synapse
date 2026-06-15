@@ -1112,9 +1112,9 @@ function DashboardPageInner() {
 
                 {/* Main content */}
                 <main
-                    className={`flex-1 w-full px-6 pt-8 pb-10 ml-16 ${activeTab === "chat"
-                        ? "max-w-none mx-0 pr-10"
-                        : "max-w-6xl mx-auto"
+                    className={`flex-1 w-full px-6 ml-16 ${activeTab === "chat"
+                        ? "max-w-none mx-0 pr-10 pt-3 pb-4"
+                        : "max-w-6xl mx-auto pt-8 pb-10"
                         }`}
                 >
                     {activeTab === "chat" ? (

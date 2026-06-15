@@ -275,7 +275,7 @@ export default function ChatWorkspace({
   const effectiveSelected = validSelected.length > 0 ? validSelected : readyLibraries[0]?.id ? [readyLibraries[0].id] : [];
 
   return (
-    <div className="flex h-[calc(100vh-128px)] flex-col">
+    <div className="flex h-[calc(100vh-5.25rem)] flex-col">
       {/* Scope toggle + (team mode) team selector */}
       <div className="mb-2 flex items-center gap-2">
         <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 p-1">

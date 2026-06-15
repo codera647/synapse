@@ -183,7 +183,7 @@ export default function LibraryDrawer({ open, onClose, library, organizationId, 
       />
 
       <aside
-        className={`fixed right-0 top-14 z-50 h-[calc(100vh-56px)] w-[420px] max-w-[92vw] border-l border-white/10 transition-transform duration-200 ease-out ${
+        className={`fixed right-0 top-14 z-50 h-[calc(100vh-3.5rem)] w-[420px] max-w-[92vw] border-l border-white/10 transition-transform duration-200 ease-out ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
         style={{
