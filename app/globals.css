@@ -300,10 +300,10 @@ body {
 /* ====================== Chat markdown (preserved API) =================== */
 .synapse-markdown {
   font-size: 0.92rem;
-  line-height: 1.65;
+  line-height: 1.72;
   color: rgba(245, 243, 255, 0.96);
 }
-.synapse-markdown :where(p) { margin: 0.6rem 0; }
+.synapse-markdown :where(p) { margin: 0.75rem 0; }
 .synapse-markdown :where(h1, h2, h3, h4) {
   margin-top: 1.35rem;
   margin-bottom: 0.6rem;

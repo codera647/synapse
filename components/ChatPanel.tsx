@@ -1468,10 +1468,10 @@ export default function ChatPanel({
             // Re-arm follow only when the user is within ~80px of the bottom.
             stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
           }}
-          className="synapse-scroll flex-1 min-h-0 overflow-auto px-3 sm:px-6 py-6"
+          className="synapse-scroll flex-1 min-h-0 overflow-auto px-4 sm:px-8 py-8"
         >
           {activeThreadId && displayMessages.length > 0 ? (
-            <div className="mx-auto w-full max-w-3xl space-y-6">
+            <div className="mx-auto w-full max-w-3xl space-y-8">
               {displayMessages.map((m) => {
                 const isUser = m.role === "user";
                 if (isUser) {
@@ -1533,7 +1533,7 @@ export default function ChatPanel({
                       ) : m.status === "streaming" && (m.content || "").trim().length === 0 ? (
                         <AgentStatusLine stage={m.stage || "Thinking"} startedAt={m.startedAt} steps={m.steps} />
                       ) : (
-                        <div className="rounded-2xl rounded-tl-md glass px-4 py-3">
+                        <div className="px-0.5 py-1">
                           <ChatAnswer content={m.content} visuals={m.visuals} citations={m.citations} />
                           {m.status === "typing" ? (
                             <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-[2px] rounded-full bg-violet-300 animate-pulse" />
