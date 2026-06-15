@@ -18,9 +18,17 @@ Run:
 
 from __future__ import annotations
 
+import os
+import sys
+
+# This file sits next to a local `datasets/` package (backend/eval/datasets). Drop this script's
+# own directory from sys.path so `import datasets` resolves to the HuggingFace library, not the
+# sibling folder.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path[:] = [p for p in sys.path if os.path.abspath(p or ".") != _HERE]
+
 import argparse
 import glob
-import os
 import random
 import tarfile
 from collections import defaultdict
