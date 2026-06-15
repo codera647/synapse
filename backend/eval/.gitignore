@@ -1,0 +1,5 @@
+# Evaluation harness outputs + downloaded data — never commit these.
+runs/
+data/
+__pycache__/
+*.pyc

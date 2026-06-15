@@ -4,6 +4,7 @@ import traceback
 import re
 import hashlib
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
@@ -96,6 +97,16 @@ THINKING_MODES = {
     "medium": (1, 2, 1.25, 3200, "balanced"),
     "high": (2, 4, 1.5, 5500, "comprehensive"),
 }
+
+class RetrieveRequest(BaseModel):
+    """Retrieval-only request (evaluation harness): rank chunks for a query without generating
+    an answer. Reuses the same hybrid retrieval path as /chat so hit@k reflects production."""
+    organization_id: str
+    library_ids: List[str] = Field(default_factory=list)
+    message: str
+    top_k: int = 5
+    cross_org: bool = False
+
 
 class CompactRequest(BaseModel):
     organization_id: str
@@ -846,9 +857,14 @@ def _chat_impl(req: ChatRequest):
         -> Synthesizer (final grounded answer)
         -> source PDFs (only the docs that contributed evidence)
 
-    Response contract is unchanged (answer/sources/followups/*_hash) plus an additive
-    `query_class` field for debugging/demo. See docs/retrieval-pipeline-design.md.
+    Response contract is unchanged (answer/sources/followups/*_hash) plus additive
+    `query_class`, `abstained`, `retrieval_confidence`, and `metrics` fields (used by the
+    evaluation harness; harmless to the frontend). See docs/retrieval-pipeline-design.md.
     """
+    _t0 = time.time()
+    # CRAG confidence, captured if the grading step runs; surfaced as retrieval_confidence below
+    # and used by the eval honesty (hit/miss x attempt/refuse) breakdown.
+    _crag_conf: Optional[float] = None
     if not req.organization_id or not req.message.strip():
         raise HTTPException(status_code=400, detail="Missing organization_id or message.")
     if not req.library_ids:
@@ -909,6 +925,9 @@ def _chat_impl(req: ChatRequest):
             "sources": [],
             "followups": [],
             "query_class": query_class,
+            "abstained": True,  # answered from general knowledge, with no grounded evidence
+            "retrieval_confidence": 0.0,
+            "metrics": {"elapsed_ms": int((time.time() - _t0) * 1000)},
             "client_request_id": req.client_request_id,
             "client_prompt_hash": req.client_prompt_hash,
             "server_prompt_hash": server_prompt_hash,
@@ -1020,7 +1039,8 @@ def _chat_impl(req: ChatRequest):
         ):
             _set_progress(rid, "Checking the evidence")
             grade = grade_retrieval(client, req.message, context_doc)
-            weak = (not grade.get("sufficient", True)) or float(grade.get("confidence", 1.0)) < float(
+            _crag_conf = float(grade.get("confidence", 1.0))
+            weak = (not grade.get("sufficient", True)) or _crag_conf < float(
                 os.getenv("CHAT_CRAG_MIN_CONF", "0.45")
             )
             if weak:
@@ -1234,6 +1254,9 @@ def _chat_impl(req: ChatRequest):
         if not sources_used and not retrieval_confident:
             sources = []
 
+        # Eval signals: retrieval_confidence (CRAG grade if it ran, else max row score), and
+        # `abstained` = the answer is not backed by any grounded source (no evidence stood behind it).
+        retrieval_confidence = _crag_conf if _crag_conf is not None else _max_row_score(rows)
         payload = {
             "answer": answer,
             "sources": sources,
@@ -1242,6 +1265,9 @@ def _chat_impl(req: ChatRequest):
             "followups": followups,
             "query_class": query_class,
             "thinking_mode": mode,
+            "abstained": len(sources) == 0,
+            "retrieval_confidence": round(float(retrieval_confidence or 0.0), 4),
+            "metrics": {"elapsed_ms": int((time.time() - _t0) * 1000)},
             "client_request_id": req.client_request_id,
             "client_prompt_hash": req.client_prompt_hash,
             "server_prompt_hash": server_prompt_hash,
@@ -1279,3 +1305,50 @@ def chat_slash(req: ChatRequest):
         return _error_response(exc, "/chat/")
     finally:
         _clear_progress(req.client_request_id)
+
+
+def _retrieve_impl(req: RetrieveRequest) -> Dict[str, Any]:
+    """Retrieval-only (no answer generation). Embeds the query and runs the SAME hybrid path as
+    /chat (vector + FTS -> RRF -> cross-encoder rerank), returning ranked chunks with their page
+    spans + scores. Powers the evaluation harness's page-level hit@k cheaply (no LLM tokens)."""
+    if not req.organization_id or not req.message.strip():
+        raise HTTPException(status_code=400, detail="Missing organization_id or message.")
+    if not req.library_ids:
+        raise HTTPException(status_code=400, detail="Select at least one library.")
+    t0 = time.time()
+    top_k = max(1, min(int(req.top_k or 5), _max_topk_cap()))
+    qv = embed_query(req.message)
+    rows = _retrieve_rows(
+        req.organization_id, req.library_ids, req.message, qv,
+        top_k=top_k, hop=0, worker_ctx=None, cross_org=bool(req.cross_org),
+    )
+    results = [
+        {
+            "rank": i + 1,
+            "chunk_id": r.get("chunk_id"),
+            "doc_id": r.get("doc_id"),
+            "library_id": r.get("library_id"),
+            "page_start": r.get("page_start"),
+            "page_end": r.get("page_end"),
+            "locator": r.get("locator"),
+            "score": r.get("rerank_score") if r.get("rerank_score") is not None else r.get("score"),
+        }
+        for i, r in enumerate(rows[:top_k])
+    ]
+    return {"results": results, "count": len(results), "metrics": {"elapsed_ms": int((time.time() - t0) * 1000)}}
+
+
+@router.post("/retrieve")
+def retrieve(req: RetrieveRequest):
+    try:
+        return _retrieve_impl(req)
+    except Exception as exc:
+        return _error_response(exc, "/retrieve")
+
+
+@router.post("/retrieve/")
+def retrieve_slash(req: RetrieveRequest):
+    try:
+        return _retrieve_impl(req)
+    except Exception as exc:
+        return _error_response(exc, "/retrieve/")

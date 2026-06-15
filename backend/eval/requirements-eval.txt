@@ -1,0 +1,9 @@
+# Extra deps for the evaluation harness (install into the backend venv):
+#   /opt/synapse/.venv/bin/python -m pip install -r backend/eval/requirements-eval.txt
+# The harness reuses the backend's existing deps (supabase, boto3, openai, pyyaml is added here).
+pyyaml>=6.0
+pandas>=2.0
+datasets>=2.18
+huggingface_hub>=0.23
+ragas>=0.1.9
+# ragas pulls langchain-openai; the OpenAI client + httpx are already in the backend env.
