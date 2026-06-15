@@ -178,8 +178,13 @@ def _read_pages(ocr_base: Path) -> Dict[int, List[str]]:
 
 
 def materialize_docs(cfg, chosen: List[Dict[str, str]]) -> None:
-    if cfg["dataset"].get("doc_source", "ocr_text") != "ocr_text":
-        raise SystemExit("only doc_source=ocr_text is implemented (page_images=23GB).")
+    src = cfg["dataset"].get("doc_source", "ocr_text")
+    if src == "page_images":
+        return materialize_docs_page_images(cfg, chosen)
+    return materialize_docs_ocr(cfg, chosen)
+
+
+def materialize_docs_ocr(cfg, chosen: List[Dict[str, str]]) -> None:
     ocr_root = _download_ocr(cfg)
     corpus = common.data_dir(cfg) / "corpus"
     corpus.mkdir(parents=True, exist_ok=True)
@@ -221,6 +226,116 @@ def materialize_docs(cfg, chosen: List[Dict[str, str]]) -> None:
     # the sample's docs (with IR paths) go to the run dir for ingest_corpus
     common.write_jsonl(common.run_dir(cfg) / "sample_docs.jsonl", docs_out)
     print(f"[double-bench] built IR for {len(docs_out)} docs -> {corpus}")
+
+
+# --- page-images path: stream docs.tar.gz (23GB) selectively, build one PDF per doc ----------
+def _docs_tar(cfg):
+    """Open docs.tar.gz: a pre-downloaded file (seekable) if configured, else an HTTP stream."""
+    import gzip
+    import requests
+
+    path = cfg["dataset"].get("docs_tar_path") or ""
+    if path and os.path.exists(path):
+        return tarfile.open(path, "r:gz"), None
+    url = f"https://huggingface.co/datasets/{cfg['dataset']['hf_dataset_id']}/resolve/main/docs.tar.gz"
+    print(f"[double-bench] streaming docs.tar.gz from HF (23GB; extracting only sampled English docs)")
+    r = requests.get(url, stream=True, timeout=1200)
+    r.raise_for_status()
+    r.raw.decode_content = True
+    gz = gzip.GzipFile(fileobj=r.raw)
+    return tarfile.open(fileobj=gz, mode="r|"), r
+
+
+def _extract_images(cfg, needed_tops: set, images_root: Path) -> Dict[str, int]:
+    """Stream the tar; extract page-image files only for the needed doc folders. Stops early once
+    every needed doc has been passed (a doc's files are contiguous in the tar)."""
+    images_root.mkdir(parents=True, exist_ok=True)
+    remaining = set(needed_tops)
+    got: Dict[str, int] = defaultdict(int)
+    tf, resp = _docs_tar(cfg)
+    seen = 0
+    current = None
+    try:
+        for m in tf:
+            seen += 1
+            if seen % 20000 == 0:
+                print(f"  ...scanned {seen} tar entries, {len(remaining)} docs left")
+            top = "/".join(m.name.split("/")[:3])
+            if current is not None and top != current and current in remaining:
+                remaining.discard(current)
+                if not remaining:
+                    break
+            current = top
+            if top in needed_tops and m.isfile() and m.name.lower().endswith((".jpg", ".jpeg", ".png")):
+                safe = _safe_id(top)
+                d = images_root / safe
+                d.mkdir(parents=True, exist_ok=True)
+                f = tf.extractfile(m)
+                if f is not None:
+                    (d / os.path.basename(m.name)).write_bytes(f.read())
+                    got[top] += 1
+    finally:
+        try:
+            tf.close()
+        except Exception:
+            pass
+        if resp is not None:
+            resp.close()
+    return got
+
+
+def _build_pdf(images_dir: Path, out_pdf: Path) -> int:
+    from PIL import Image
+
+    def _idx(p: Path) -> int:
+        try:
+            return int(os.path.splitext(p.name)[0])
+        except Exception:
+            return 1_000_000
+
+    imgs = sorted([p for p in images_dir.iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png")], key=_idx)
+    if not imgs:
+        return 0
+    pages = []
+    for p in imgs:
+        try:
+            pages.append(Image.open(p).convert("RGB"))
+        except Exception:
+            pass
+    if not pages:
+        return 0
+    pages[0].save(out_pdf, "PDF", save_all=True, append_images=pages[1:])
+    return len(pages)
+
+
+def materialize_docs_page_images(cfg, chosen: List[Dict[str, str]]) -> None:
+    data = common.data_dir(cfg)
+    corpus = data / "corpus"
+    corpus.mkdir(parents=True, exist_ok=True)
+    needed = {d["doc_path"] for d in chosen}     # e.g. "docs/English/0989"
+    images_root = data / "images"
+    got = _extract_images(cfg, needed, images_root)
+    print(f"[double-bench] extracted images for {len(got)}/{len(needed)} docs")
+
+    docs_out: List[Dict[str, Any]] = []
+    for d in chosen:
+        safe = _safe_id(d["doc_path"])
+        idir = images_root / safe
+        if not idir.exists() or not any(idir.iterdir()):
+            print(f"  ! no images for {d['doc_path']} — skipped")
+            continue
+        out_pdf = corpus / f"{safe}.pdf"
+        n = _build_pdf(idir, out_pdf)
+        if n == 0:
+            print(f"  ! could not build PDF for {d['doc_path']} — skipped")
+            continue
+        docs_out.append({
+            "doc_id": d["doc_path"], "path": str(out_pdf), "mime_type": "application/pdf",
+            "doc_type": d["doc_type"], "language": d["language"], "num_pages": n,
+        })
+    common.write_jsonl(data / "docs.jsonl", docs_out)
+    common.write_jsonl(common.run_dir(cfg) / "sample_docs.jsonl", docs_out)
+    print(f"[double-bench] built {len(docs_out)} image-PDFs -> {corpus}")
 
 
 def main() -> None:

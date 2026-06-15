@@ -65,7 +65,6 @@ def _create_org_library(cfg, sb) -> Dict[str, str]:
             "source_folder_id": "eval",
             "status": "processing",
             "pipeline_status": "queued",
-            "pipeline_stage": "chunking",
             "pipeline_progress_percent": 0,
             "cancel_requested": False,
         }
@@ -89,32 +88,44 @@ def ingest(cfg, reset: bool) -> Dict[str, Any]:
         print(f"[ingest] created org={state['org_id']} library={state['library_id']}")
     org_id, lib_id = state["org_id"], state["library_id"]
 
+    PIPELINE = ["sync", "layout_parser", "text_extraction", "image_captioning",
+                "chunking", "embedding", "clustering"]
+    page_images = cfg["dataset"].get("doc_source", "ocr_text") == "page_images"
+    start_stage = "layout_parser" if page_images else "chunking"
+
     doc_map: Dict[str, str] = {}
     rows: List[Dict[str, Any]] = []
-    print(f"[ingest] uploading {len(docs)} text-IR docs to R2 + inserting documents rows ...")
+    kind = "page-image PDFs" if page_images else "text-IR"
+    print(f"[ingest] uploading {len(docs)} {kind} to R2 + inserting documents rows ...")
     for d in docs:
         bench_id = str(d["doc_id"])
-        ir_path = d["ir_path"]
         synapse_doc_id = str(uuid.uuid4())
-        # The IR contract chunk_worker reads: text/{org}/{lib}/{doc}.json (pages[].blocks[]).
-        text_key = f"text/{org_id}/{lib_id}/{synapse_doc_id}.json"
-        with open(ir_path, "rb") as f:
-            body = f.read()
-        s3.put_object(Bucket=bucket, Key=text_key, Body=body, ContentType="application/json")
-        rows.append(
-            {
-                "id": synapse_doc_id,
-                "organization_id": org_id,
-                "library_id": lib_id,
-                "title": bench_id,
-                "mime_type": d.get("mime_type") or "application/pdf",
-                "file_size_bytes": len(body),
-                "status": "pending",
-                "storage_path": text_key,
-                "storage_path_text": text_key,
+        if page_images:
+            # Raw PDF -> layout/extraction/caption read it from storage_path_raw.
+            key = f"raw/{org_id}/{lib_id}/{synapse_doc_id}.pdf"
+            with open(d["path"], "rb") as f:
+                body = f.read()
+            s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/pdf")
+            doc_row = {
+                "id": synapse_doc_id, "organization_id": org_id, "library_id": lib_id,
+                "title": bench_id, "mime_type": "application/pdf", "file_size_bytes": len(body),
+                "status": "pending", "storage_path": key, "storage_path_raw": key,
                 "gdrive_file_id": f"bench:{bench_id}",
             }
-        )
+        else:
+            # Text IR -> chunk_worker reads text/{org}/{lib}/{doc}.json.
+            key = f"text/{org_id}/{lib_id}/{synapse_doc_id}.json"
+            with open(d["ir_path"], "rb") as f:
+                body = f.read()
+            s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/json")
+            doc_row = {
+                "id": synapse_doc_id, "organization_id": org_id, "library_id": lib_id,
+                "title": bench_id, "mime_type": d.get("mime_type") or "application/pdf",
+                "file_size_bytes": len(body), "status": "pending",
+                "storage_path": key, "storage_path_text": key,
+                "gdrive_file_id": f"bench:{bench_id}",
+            }
+        rows.append(doc_row)
         doc_map[bench_id] = synapse_doc_id
 
     # Upsert documents in chunks (idempotent on library_id,gdrive_file_id).
@@ -122,19 +133,16 @@ def ingest(cfg, reset: bool) -> Dict[str, Any]:
         sb.table("documents").upsert(rows[i : i + 200], on_conflict="library_id,gdrive_file_id").execute()
     (rd / "doc_map.json").write_text(json.dumps(doc_map, indent=2), encoding="utf-8")
 
-    # We injected the text IR directly, so skip sync/layout/extraction/caption and start at
-    # `chunking`: chunk -> embed -> cluster. (No VLM/captioning cost; pages are exact.)
+    # Start the pipeline at `start_stage`; seed synthetic done-rows for every PRIOR stage so the
+    # per-stage claim gates pass (each stage gates on its predecessor being done for the batch).
     n_workers = int(os.getenv("EVAL_INGEST_BATCHES", "8"))
-    res = create_library_batches(org_id, lib_id, worker_count=n_workers, stage="chunking")
-
-    # chunk_worker.claim gates `chunking` on text_extraction + image_captioning being `done` for the
-    # batch. Since we skipped them, seed synthetic done-rows for the skipped pre-chunking stages so
-    # the gate passes. (upsert on batch_id,stage keeps it idempotent.)
+    res = create_library_batches(org_id, lib_id, worker_count=n_workers, stage=start_stage)
+    prior = PIPELINE[: PIPELINE.index(start_stage)]
     batches = sb.table("library_batches").select("id").eq("library_id", lib_id).execute().data or []
     now = _now_iso()
     synthetic = []
     for b in batches:
-        for st in ("sync", "layout_parser", "text_extraction", "image_captioning"):
+        for st in prior:
             synthetic.append({
                 "organization_id": org_id, "library_id": lib_id, "batch_id": b["id"],
                 "stage": st, "status": "done", "attempts": 0, "payload": {},
@@ -147,15 +155,19 @@ def ingest(cfg, reset: bool) -> Dict[str, Any]:
         {
             "status": "processing",
             "pipeline_status": "running",
-            "pipeline_stage": "chunking",
+            "pipeline_stage": start_stage,
             "pipeline_error": None,
             "cancel_requested": False,
             "total_batches": int(res.get("created") or 0),
             "completed_batches": 0,
         }
     ).eq("id", lib_id).execute()
-    print(f"[ingest] created {res.get('created')} batches @ chunking; library is now processing.")
-    print("  Reminder: workers must run with EMBED_MODEL=BAAI/bge-m3 (multilingual).")
+    print(f"[ingest] created {res.get('created')} batches @ {start_stage}; library is now processing.")
+    if page_images:
+        print("  Full pipeline incl. VLM captioning. Workers: EMBED_MODEL=BAAI/bge-m3, "
+              "CAPTION_USE_API=1, CHUNK_CONTEXTUAL=0.")
+    else:
+        print("  Workers: EMBED_MODEL=BAAI/bge-m3.")
     return state
 
 

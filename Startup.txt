@@ -3,3 +3,5 @@
 nohup cloudflared tunnel --url http://localhost:8000 > ~/cf-tunnel.log 2>&1 &
 sleep 10
 grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' ~/cf-tunnel.log | head -1
+
+source /opt/synapse/.venv/bin/activate

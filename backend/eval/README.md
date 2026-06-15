@@ -7,21 +7,28 @@ Synapse is a *text-chunk* RAG (parse → caption → VLM-transcribe scanned), so
 like the paper's text-based `Colqwen-gen` baseline — not a native page-image retriever.
 
 ## Dataset = `Episoode/Double-Bench` (HuggingFace)
-Two query configs (`single-hop`, `multi-hop`); documents in `docs.tar.gz` (23GB page images) and
-`ocr.tar.gz` (66MB OCR text). We use the **OCR text** to build Synapse's text-IR directly (one
-block-set per page) and inject it — page-accurate (`reference_page` is 0-based), unicode-safe, and
-**free** (no layout/VLM). Languages: **en + ar + fr** (Urdu isn't in DOUBLE-BENCH; Arabic is the
-low-resource/RTL substitute the panel will appreciate). Demo sample: ~90 docs.
+Two query configs (`single-hop`, `multi-hop`). Documents are **page images** in `docs.tar.gz` (23GB)
+plus OCR text in `ocr.tar.gz` (66MB). Two ingestion modes (config `dataset.doc_source`):
+- **`page_images` (current — real pipeline):** stream just the sampled English docs out of the 23GB
+  tar, build one image-PDF per doc, and run Synapse's **full** pipeline — `layout_parser →
+  text_extraction → image_captioning (VLM) → chunking → embedding → clustering`. Faithful and
+  multimodal; captioning costs OpenRouter.
+- **`ocr_text` (cheap fallback):** inject the OCR text as Synapse's text-IR and start at `chunking`
+  (no VLM, free).
 
-## Budget model
-- **OpenRouter (captioning): $0** — IR injection means no `image_captioning` runs for the benchmark.
-- **OpenAI (~$3.52)**: only query generation + judging. Deep mode + dual judge (gpt-4o + gpt-5.5)
-  ≈ **~10–12 judged queries**; a hard cap (`budget.max_openai_spend_usd`) stops before overrun.
-- **Retrieval hit@k = free** (local `bge-m3` + reranker) → runs on **all** sampled queries.
+Default config: **English only**, **PDF + scanned + HTML** (no slides), **50 docs**. `reference_page`
+is 0-based (so `page_offset: 0`).
+
+## Budget model (50-doc, page_images, deep + dual judge)
+- **OpenRouter (separate pool):** VLM captions every page of 50 image-docs ≈ **$3–5**.
+- **OpenAI (~$10):** retrieval = **$0**; deep `/chat` + dual judge (gpt-4o + gpt-5.5) ≈ $0.32/query →
+  **~28 judged queries**, hard-capped at `budget.max_openai_spend_usd` ($9.5).
+- **Retrieval hit@k = free** (local `bge-m3` + reranker) on **all** ~80–100 sampled queries.
 
 ## Prerequisites
-1. Worker pool running with **`EMBED_MODEL=BAAI/bge-m3`** (multilingual). Captioning/contextual are
-   not exercised by the eval library (IR injected, batches start at `chunking`).
+1. Worker pool running with **`EMBED_MODEL=BAAI/bge-m3`**, **`CAPTION_USE_API=1`** (Qwen2.5-VL via
+   OpenRouter — every page of the image-docs is transcribed/captioned), and **`CHUNK_CONTEXTUAL=0`**
+   (protects the OpenAI budget). Ensure your **OpenRouter** balance has ~$5.
 2. Backend reachable at `backend_url` (config). `OPENAI_API_KEY` set for the judges.
 3. Install deps: `/opt/synapse/.venv/bin/python -m pip install -r backend/eval/requirements-eval.txt`
 

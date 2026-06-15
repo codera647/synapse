@@ -13,17 +13,18 @@ dataset:
   hf_dataset_id: Episoode/Double-Bench
   configs: [single-hop, multi-hop]
   local_dir: data/double_bench         # downloads + normalized jsonl + built corpus land here
-  doc_source: ocr_text                  # ocr_text (recommended, cheap) | page_images (23GB, full pipeline)
-  # ISO code -> repo folder name (paths use full names; queries use codes)
+  doc_source: page_images               # page_images = real pipeline (layout->...->cluster, VLM caption)
+                                         # | ocr_text = cheap text-IR injection (no VLM)
+  docs_tar_path: ""                     # optional: path to a pre-downloaded docs.tar.gz (else stream from HF)
   lang_folders: { en: English, ar: Arabic, fr: French, es: Spanish, ja: Japanese, zh: Chinese }
 
 # ---- Stratified DEMO sample --------------------------------------------------------------
 sample:
   seed: 17
-  max_docs: 90                          # handful of docs for the demo (reduce if needed)
-  languages: [en, ar, fr]               # English + Arabic (Urdu not in DOUBLE-BENCH) + French
-  doc_types: [pdf, scanned, slides, html]
-  per_stratum_docs: null                # null = balanced round-robin across (lang x doc_type)
+  max_docs: 50                          # 50 English docs for the real-pipeline run
+  languages: [en]                       # English only (clean headline; bge-m3 is multilingual either way)
+  doc_types: [pdf, scanned, html]       # no slides/ppt
+  per_stratum_docs: null                # null = balanced round-robin across (lang x doc_type) ~ 17/17/16
 
 # ---- Retrieval (free; runs on ALL sampled queries) ---------------------------------------
 retrieval:
@@ -34,14 +35,14 @@ retrieval:
 # ---- Judged answer slice (paid; deep mode + dual judge) ----------------------------------
 answer:
   thinking_mode: high                   # DEEP mode for chat answers
-  answer_slice_size: 12                 # queries to fully judge (deep mode budget ~$3)
+  answer_slice_size: 28                 # queries to fully judge (deep mode, ~$9 of the $10 pool)
   concurrency: 2
   judges: [gpt-4o, gpt-5.5]             # dual judge
   ragas_llm: gpt-4o-mini                # cheap model for RAGAS internal grading
 
 # ---- Hard budget cap (never overrun the OpenAI pool) -------------------------------------
 budget:
-  max_openai_spend_usd: 3.0
+  max_openai_spend_usd: 9.5
   deep_query_cost_usd: 0.30             # flat estimate per deep /chat (tokens unseen via HTTP)
   prices:
     gpt-4o:      { input: 2.5,  output: 10.0 }
