@@ -59,9 +59,26 @@ def _is_retryable_supabase_error(exc: Exception) -> bool:
     m = msg.lower()
     if "json could not be generated" in m:
         return True
+    # Supabase is fronted by Cloudflare; under load / large bodies it can return an HTML block or
+    # challenge page (403/5xx/1xxx) instead of JSON. Transient -> retry. (Genuine RLS 403s come back
+    # as JSON like "permission denied"/42501, which won't match these HTML/Cloudflare markers.)
+    if "<!doctype html" in m or "<html" in m:
+        return True
+    if "cloudflare" in m or "just a moment" in m or "attention required" in m or "access denied" in m:
+        return True
+    if "no-js ie6 oldie" in m or "error code 1020" in m or "error code 1015" in m or "error code 1010" in m:
+        return True
     if "bad gateway" in m or "error code 502" in m or " 502" in m:
         return True
+    if "service unavailable" in m or "error code 503" in m or " 503" in m:
+        return True
+    if "gateway timeout" in m or "error code 504" in m or " 504" in m:
+        return True
     if "web server is down" in m or "error code 521" in m or " 521" in m:
+        return True
+    if "error code 520" in m or "error code 522" in m or "error code 524" in m:
+        return True
+    if "connection reset" in m or "connection aborted" in m or "remotedisconnected" in m:
         return True
     if "timeout" in m or "timed out" in m:
         return True
@@ -71,9 +88,10 @@ def _is_retryable_supabase_error(exc: Exception) -> bool:
         if exc.args and isinstance(exc.args[0], dict):
             code = str(exc.args[0].get("code") or "")
             details = str(exc.args[0].get("details") or "").lower()
-            if code in {"502", "521", "429"}:
+            if code in {"403", "429", "502", "503", "504", "520", "521", "522", "524", "1015", "1020"}:
                 return True
-            if "bad gateway" in details or "web server is down" in details:
+            if ("<!doctype html" in details or "<html" in details or "cloudflare" in details
+                    or "bad gateway" in details or "web server is down" in details):
                 return True
     except Exception:
         pass

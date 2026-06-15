@@ -127,6 +127,10 @@ export default function PipelineStepper({
   // ── Full: vertical stepper for the drawer ────────────────────────────────────────────
   return (
     <div className="space-y-1.5">
+      <div className="flex items-center justify-between px-0.5 pb-0.5 text-[10px] uppercase tracking-wide text-white/30">
+        <span>Stage</span>
+        <span>batches done / total</span>
+      </div>
       {present.map((s) => {
         const st = stageState(s.key);
         const stat = stats[s.key];
@@ -157,7 +161,7 @@ export default function PipelineStepper({
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between text-xs">
                 <span className={st === "running" ? "text-white" : "text-white/70"}>{s.label}</span>
-                <span className="text-white/40">
+                <span className="text-white/40" title={`${stat.done} of ${stat.total} batches done`}>
                   {stat.done}/{stat.total}
                   {stat.failed > 0 ? <span className="ml-1 text-rose-300">· {stat.failed} failed</span> : null}
                 </span>

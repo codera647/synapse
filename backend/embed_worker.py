@@ -53,13 +53,30 @@ def _is_retryable_supabase_error(exc: Exception) -> bool:
     m = msg.lower()
     if "json could not be generated" in m:
         return True
+    # Supabase is fronted by Cloudflare. Under load / large bodies it can return an HTML block or
+    # challenge page (403/5xx/1xxx) instead of JSON. These are transient — retry, don't fail the
+    # batch. (A genuine RLS 403 returns JSON like "permission denied"/42501, which won't match here.)
+    if "<!doctype html" in m or "<html" in m:
+        return True
+    if "cloudflare" in m or "just a moment" in m or "attention required" in m or "access denied" in m:
+        return True
+    if "no-js ie6 oldie" in m or "error code 1020" in m or "error code 1015" in m or "error code 1010" in m:
+        return True
     if "bad gateway" in m or "error code 502" in m or " 502" in m:
         return True
+    if "service unavailable" in m or "error code 503" in m or " 503" in m:
+        return True
+    if "gateway timeout" in m or "error code 504" in m or " 504" in m:
+        return True
     if "web server is down" in m or "error code 521" in m or " 521" in m:
+        return True
+    if "error code 520" in m or "error code 522" in m or "error code 524" in m:
         return True
     if "timeout" in m or "timed out" in m:
         return True
     if "too many requests" in m or " 429" in m:
+        return True
+    if "connection reset" in m or "connection aborted" in m or "remotedisconnected" in m:
         return True
     return False
 
@@ -514,12 +531,17 @@ def run_embedding_stage_job(stage_job: dict):
                 )
 
             if rows:
-                chunk_size = int(os.getenv("EMBED_UPSERT_CHUNK", "200"))
+                # Each row carries a 1024-dim vector; 200 rows is a multi-MB POST that can trip
+                # Supabase's Cloudflare WAF (403 HTML). Keep batches small to stay under the radar,
+                # and give these writes a longer retry window since a WAF block can last ~1 min.
+                chunk_size = int(os.getenv("EMBED_UPSERT_CHUNK", "64"))
+                upsert_attempts = int(os.getenv("EMBED_UPSERT_RETRIES", "10"))
                 for i in range(0, len(rows), chunk_size):
                     part = rows[i : i + chunk_size]
                     _sb_execute(
                         supabase.table(table_name).upsert(part, on_conflict="chunk_id"),
                         context=f"{table_name}.upsert",
+                        max_attempts=upsert_attempts,
                     )
                 inserted_total += len(rows)
 
