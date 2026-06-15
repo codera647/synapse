@@ -324,7 +324,7 @@ export default function ChatPanel({
     while ((m = re.exec(text)) !== null) {
       if (m.index > last) out.push(<span key={k++}>{text.slice(last, m.index)}</span>);
       out.push(
-        <span key={k++} className="rounded bg-violet-500/30 px-0.5 font-medium text-violet-200">
+        <span key={k++} className="rounded bg-violet-500/25 text-violet-300">
           {m[0]}
         </span>
       );
@@ -1468,10 +1468,10 @@ export default function ChatPanel({
             // Re-arm follow only when the user is within ~80px of the bottom.
             stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
           }}
-          className="synapse-scroll flex-1 min-h-0 overflow-auto px-4 sm:px-8 py-8"
+          className="synapse-scroll flex-1 min-h-0 overflow-auto px-3 sm:px-5 py-8"
         >
           {activeThreadId && displayMessages.length > 0 ? (
-            <div className="mx-auto w-full max-w-3xl space-y-8">
+            <div className="mx-auto w-full max-w-4xl space-y-8">
               {displayMessages.map((m) => {
                 const isUser = m.role === "user";
                 if (isUser) {
@@ -1725,7 +1725,7 @@ export default function ChatPanel({
           ) : null}
 
           {compacting && (
-            <div className="mx-auto mb-2 w-full max-w-3xl">
+            <div className="mx-auto mb-2 w-full max-w-4xl">
               <div className="flex items-center gap-3 rounded-xl border border-violet-400/25 bg-violet-500/10 px-3.5 py-2.5">
                 <span className="h-4 w-4 shrink-0 rounded-full border-2 border-violet-300/40 border-t-violet-300 animate-spin" />
                 <div className="min-w-0 flex-1">
@@ -1739,7 +1739,7 @@ export default function ChatPanel({
           )}
 
           {hasLibCmd && (
-            <div className="mx-auto mb-2 w-full max-w-3xl">
+            <div className="mx-auto mb-2 w-full max-w-4xl">
               <div className="rounded-xl border border-violet-400/30 bg-violet-500/10 px-3 py-2">
                 <div className="flex items-center gap-2 text-[11px]">
                   <FiBookOpen className="h-3.5 w-3.5 shrink-0 text-violet-300" />
@@ -1792,7 +1792,7 @@ export default function ChatPanel({
             </div>
           )}
 
-          <div className="mx-auto w-full max-w-3xl">
+          <div className="mx-auto w-full max-w-4xl">
             <div className="flex items-end gap-2 rounded-2xl glass-strong glass-hi px-3 py-2.5 transition-all focus-within:border-violet-400/40">
               <button
                 type="button"

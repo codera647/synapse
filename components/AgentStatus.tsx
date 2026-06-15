@@ -3,23 +3,30 @@
 import { useEffect, useRef, useState } from "react";
 import { FiCheck, FiChevronDown, FiZap } from "react-icons/fi";
 
-// Reveal a string character-by-character; restarts whenever `text` changes.
-function useTypewriter(text: string, speed = 26): string {
+// Reveal a string character-by-character; restarts whenever `text` changes. Also reports whether
+// it's still typing, so the caller can show a cursor ONLY during typing (Claude-style: the cursor
+// types out the line, vanishes when it settles, then reappears on the next status).
+function useTypewriter(text: string, speed = 26): { value: string; typing: boolean } {
   const [shown, setShown] = useState(text);
+  const [typing, setTyping] = useState(false);
   const prev = useRef<string>("");
   useEffect(() => {
     if (text === prev.current) return;
     prev.current = text;
     let i = 0;
     setShown("");
+    setTyping(true);
     const id = setInterval(() => {
       i += 1;
       setShown(text.slice(0, i));
-      if (i >= text.length) clearInterval(id);
+      if (i >= text.length) {
+        clearInterval(id);
+        setTyping(false);
+      }
     }, speed);
     return () => clearInterval(id);
   }, [text, speed]);
-  return shown || text;
+  return { value: shown || text, typing };
 }
 
 // Seconds elapsed since `startedAt`, ticking once per second.
@@ -46,7 +53,7 @@ export function AgentStatusLine({
   startedAt?: number;
   steps?: string[];
 }) {
-  const typed = useTypewriter(stage || "Thinking");
+  const { value: typed, typing } = useTypewriter(stage || "Thinking");
   const elapsed = useElapsed(startedAt);
   const prior = (steps || []).slice(0, -1).slice(-3); // last few completed (excludes the current)
 
@@ -59,7 +66,9 @@ export function AgentStatusLine({
         </span>
         <span className="text-sm text-white/85">
           {typed}
-          <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-[2px] rounded-full bg-violet-300 animate-pulse align-middle" />
+          {typing ? (
+            <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-[2px] rounded-full bg-violet-300 align-middle" />
+          ) : null}
         </span>
         {elapsed > 0 ? (
           <span className="ml-auto shrink-0 text-[11px] tabular-nums text-white/35">{elapsed}s</span>
