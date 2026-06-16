@@ -79,16 +79,15 @@ function VegaView({ specKey }: { specKey: string }) {
 
   if (err) return <div className="text-xs text-white/40">Chart unavailable ({err}).</div>;
   if (!spec) return <div className="h-40 animate-pulse rounded-lg bg-white/5" />;
-  // Make the chart fit its card (cell) instead of spanning the full row, so several can sit side by side.
-  const fitted = {
-    ...spec,
-    width: "container",
-    height: typeof (spec as { height?: unknown }).height === "number" ? (spec as { height?: number }).height : 240,
-    autosize: { type: "fit", contains: "padding" },
-  };
+  // Render at the spec's natural size, then CSS-scale the rendered canvas/svg to fit the card. This
+  // avoids Vega's width:"container" measuring 0 in a grid cell / drawer (which renders a blank chart),
+  // while still shrinking the chart so several fit per row. The download PNG stays full resolution.
+  const safe: Record<string, unknown> = { ...spec };
+  if (safe.width === "container") delete safe.width; // container width needs measurement -> blank in cells
+  if (safe.autosize && typeof safe.autosize === "object") delete safe.autosize;
   return (
-    <div className="w-full overflow-hidden rounded-lg bg-white p-2">
-      <VegaLite spec={fitted as never} actions={false} renderer="canvas" />
+    <div className="w-full overflow-hidden rounded-lg bg-white p-2 text-center [&_canvas]:!mx-auto [&_canvas]:!h-auto [&_canvas]:!max-w-full [&_svg]:!mx-auto [&_svg]:!h-auto [&_svg]:!max-w-full">
+      <VegaLite spec={safe as never} actions={false} renderer="canvas" />
     </div>
   );
 }
