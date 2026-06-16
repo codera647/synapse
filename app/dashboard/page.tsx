@@ -620,6 +620,24 @@ function DashboardPageInner() {
             const denom = Math.max(1, totalBatches * requiredStages.length);
             const inferredPercent = totalBatches > 0 ? Math.round((doneTotal / denom) * 100) : 0;
 
+            // Liveness / staleness: when a worker dies (e.g., the VM is stopped) it leaves jobs stuck
+            // in "running" in the DB — nothing updates them, so the UI would show a confident
+            // "running 9/7" forever. Detect silence and surface it instead of pretending it's live.
+            const nowMs = Date.now();
+            const STALE_HINT_MS = 5 * 60_000;
+            const STALE_STOP_MS = 12 * 60_000;
+            let lastActivityMs = 0;
+            for (const r of rows) {
+                const ts = r.updated_at ? Date.parse(r.updated_at) : 0;
+                if (ts > lastActivityMs) lastActivityMs = ts;
+            }
+            const silentMs = lastActivityMs ? nowMs - lastActivityMs : 0;
+            const anyActiveJob = rows.some((r) => {
+                const s = String(r.status ?? "");
+                return s === "running" || s === "queued";
+            });
+            const isStalled = anyActiveJob && lastActivityMs > 0 && silentMs > STALE_HINT_MS;
+
             const patched = {
                 ...data,
                 pipeline_status: anyFailedStageJob
@@ -650,7 +668,9 @@ function DashboardPageInner() {
                 pipeline_error:
                     anyFailedStageJob
                         ? (firstFailed?.last_error ?? data.pipeline_error ?? "A pipeline stage failed.")
-                        : data.pipeline_error,
+                        : isStalled
+                            ? `Backend not responding — no progress for ${Math.max(1, Math.round(silentMs / 60000))} min. The worker VM may be stopped; start it (or Resume) to continue.`
+                            : data.pipeline_error,
             };
 
             setActiveLibrary((prev) =>
@@ -702,7 +722,12 @@ function DashboardPageInner() {
                                 attempts: r.attempts,
                                 worker: r.assigned_worker,
                                 error: r.last_error,
-                                progress: [r.progress_current, r.progress_total],
+                                progress: [
+                                    r.progress_total && r.progress_current
+                                        ? Math.min(r.progress_current, r.progress_total)
+                                        : r.progress_current,
+                                    r.progress_total,
+                                ],
                                 updated_at: r.updated_at,
                             },
                             libraryId,
@@ -725,12 +750,11 @@ function DashboardPageInner() {
                 // ignore log diff errors
             }
 
-            // Keep polling while incomplete libraries exist (so Resume becomes available quickly).
-            const shouldStop =
-                patched.pipeline_status === "failed" ||
-                patched.pipeline_status === "canceled" ||
-                data.status === "error" ||
-                (patched.pipeline_status === "completed" && remainingCount === 0);
+            // Keep polling until the batches actually SETTLE (no running/queued left), so the per-batch
+            // console reflects the final outcome — e.g. siblings moving running -> canceled after a
+            // failure — instead of freezing at "running" until the user refreshes. Also stop if the
+            // backend has gone silent for a long time (VM down), so we don't poll a dead VM forever.
+            const shouldStop = !anyActiveJob || silentMs > STALE_STOP_MS;
 
             if (shouldStop) {
                 clearInterval(interval);

@@ -362,7 +362,11 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
                                   <>
                                     <span className="mx-2 text-gray-600">·</span>
                                     <span className="text-gray-400">
-                                      {String(prog[0] ?? 0)}/{String(prog[1] ?? 0)}
+                                      {String(
+                                        prog[1] != null && prog[0] != null
+                                          ? Math.min(Number(prog[0]), Number(prog[1]))
+                                          : prog[0] ?? 0
+                                      )}/{String(prog[1] ?? 0)}
                                     </span>
                                   </>
                                 )}

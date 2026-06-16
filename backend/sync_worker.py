@@ -487,6 +487,7 @@ def claim_sync_stage_job(worker_id: str):
                 "assigned_worker": worker_id,
                 "started_at": now_iso(),
                 "attempts": int(job.get("attempts") or 0) + 1,
+                "progress_current": 0,  # reset on (re)claim so resume counts from 0, not 9/7
             }
         )
         .eq("id", job["id"])
