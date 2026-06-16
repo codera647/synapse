@@ -591,13 +591,25 @@ function DashboardPageInner() {
 
             const doneEmbedding = stageDoneCounts.get("embedding") ?? 0;
 
+            // Clustering is a library-level final step (one job, not one per batch). Gate "completed"
+            // on it so the bar reaches 100% only when clustering finishes. Already-completed libraries
+            // that predate this (no clustering rows) fall back to the backend's status.
+            const clusterRows = rows.filter((r) => String(r.stage ?? "") === "clustering");
+            const clusterTotal = clusterRows.length;
+            const clusterDone = clusterRows.filter((r) => String(r.status ?? "") === "done").length;
+            const clusterFailed = clusterRows.some((r) => String(r.status ?? "") === "failed");
+            const clusteringComplete =
+                clusterTotal > 0 ? clusterDone >= clusterTotal : data.pipeline_status === "completed";
+            if (!clusteringComplete) remainingCount += 1;
+
             const anyFailedStageJob =
                 hasStageRows &&
-                rows.some(
-                    (r) =>
-                        String(r.status ?? "") === "failed" &&
-                        requiredStageSet.has(String(r.stage ?? ""))
-                );
+                (clusterFailed ||
+                    rows.some(
+                        (r) =>
+                            String(r.status ?? "") === "failed" &&
+                            requiredStageSet.has(String(r.stage ?? ""))
+                    ));
             const firstFailed = anyFailedStageJob
                 ? rows.find(
                     (r) =>
@@ -608,18 +620,21 @@ function DashboardPageInner() {
 
             const fullyProcessed =
                 totalBatches > 0 &&
-                doneEmbedding >= totalBatches;
+                doneEmbedding >= totalBatches &&
+                clusteringComplete;
 
             const inferredCompleted = fullyProcessed;
 
             // Compute percent from required stages. If some stage jobs don't exist yet, count them as 0 done.
-            // This keeps partially processed older libraries from showing 100%.
+            // This keeps partially processed older libraries from showing 100%. Clustering counts as the
+            // final stage-worth of progress, so embedding-done sits just below 100% until clustering ends.
             let doneTotal = 0;
             for (const st of requiredStages) {
                 doneTotal += Math.min(stageDoneCounts.get(st) ?? 0, totalBatches);
             }
-            const denom = Math.max(1, totalBatches * requiredStages.length);
-            const inferredPercent = totalBatches > 0 ? Math.round((doneTotal / denom) * 100) : 0;
+            const clusterUnits = clusteringComplete ? totalBatches : 0;
+            const denom = Math.max(1, totalBatches * (requiredStages.length + 1));
+            const inferredPercent = totalBatches > 0 ? Math.round(((doneTotal + clusterUnits) / denom) * 100) : 0;
 
             // Liveness / staleness: when a worker dies (e.g., the VM is stopped) it leaves jobs stuck
             // in "running" in the DB — nothing updates them, so the UI would show a confident
