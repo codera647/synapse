@@ -172,6 +172,14 @@ def put_r2_json(key: str, payload: dict):
     )
 
 
+def _r2_exists(key: str) -> bool:
+    try:
+        s3.head_object(Bucket=R2_BUCKET, Key=key)
+        return True
+    except Exception:
+        return False
+
+
 def _pipeline_stages():
     import pipeline_config
     return pipeline_config.pipeline_stages()
@@ -560,6 +568,43 @@ def run_text_extraction_stage_job(stage_job):
             d = docs_by_id.get(doc_id) or {}
             key = d.get("storage_path_raw")
             mime = (d.get("mime_type") or "").lower()
+
+            # Idempotency: if this doc was already transcribed in a prior (canceled/failed) run, its
+            # text IR is in R2 — re-running the batch must NOT re-call the VLM and re-charge OpenRouter.
+            # Skip it, just make sure the document still points at its IR for the chunking stage.
+            out_key = f"text/{org_id}/{library_id}/{doc_id}.json"
+            if os.getenv("EXTRACT_SKIP_DONE", "1").strip().lower() in {"1", "true", "yes", "on"} and _r2_exists(out_key):
+                doc_updates.append(
+                    {
+                        "id": doc_id,
+                        "organization_id": d.get("organization_id") or org_id,
+                        "library_id": d.get("library_id") or library_id,
+                        "title": d.get("title") or doc_id,
+                        "gdrive_file_id": d.get("gdrive_file_id"),
+                        "mime_type": d.get("mime_type"),
+                        "file_size_bytes": d.get("file_size_bytes"),
+                        "status": d.get("status") or "pending",
+                        "storage_path_raw": key,
+                        "storage_path_text": out_key,
+                    }
+                )
+                if len(doc_updates) >= doc_update_chunk:
+                    _sb_execute(
+                        supabase.table("documents").upsert(doc_updates, on_conflict="id"),
+                        context="documents.upsert(skip_done)",
+                    )
+                    doc_updates = []
+                current += 1
+                if current % progress_every == 0:
+                    _sb_execute(
+                        supabase.table("batch_stage_jobs").update(
+                            {"progress_current": current, "progress_total": total}
+                        ).eq("id", job_id),
+                        context="batch_stage_jobs.update(progress)",
+                    )
+                print(f"[extract] doc={doc_id} already has text IR — skipping (no VLM re-charge).")
+                continue
+
             if not key or ("pdf" not in mime):
                 # Non-PDF formats (Excel / CSV / code / text): parse to the SAME text IR so
                 # chunk -> embed -> retrieve work unchanged. Skip only if unsupported.
