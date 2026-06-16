@@ -26,7 +26,20 @@ import base64
 import io
 import json
 import os
+import random
+import time
 from typing import Any, Dict, List, Optional
+
+
+def _is_transient(exc: Exception) -> bool:
+    """Network/server hiccups worth retrying (OpenRouter drops connections under load)."""
+    m = (str(exc) or "").lower()
+    keys = (
+        "ssl", "eof", "unexpected_eof", "connection", "connect", "timed out", "timeout",
+        "reset", "aborted", "remotedisconnected", "incompleteread", "protocol", "broken pipe",
+        "temporarily", "overloaded", "rate limit", "429", "500", "502", "503", "504", "gateway",
+    )
+    return any(k in m for k in keys)
 
 _DEFAULT_BASE = "https://openrouter.ai/api/v1"
 _DEFAULT_MODEL = "qwen/qwen2.5-vl-72b-instruct"
@@ -78,14 +91,32 @@ def _chat(messages: List[dict], max_tokens: int, temperature: float = 0.1) -> st
     title = (os.getenv("CAPTION_VLM_TITLE") or "Synapse").strip()
     if title:
         extra_headers["X-Title"] = title
-    resp = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        extra_headers=extra_headers or None,
-    )
-    return (resp.choices[0].message.content or "").strip()
+
+    attempts = max(1, int(os.getenv("CAPTION_VLM_RETRIES", "5")))
+    base_sleep = float(os.getenv("CAPTION_VLM_RETRY_BASE", "1.5"))
+    timeout_s = float(os.getenv("CAPTION_VLM_TIMEOUT", "120"))
+    last_exc: Optional[Exception] = None
+    for i in range(attempts):
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                extra_headers=extra_headers or None,
+                timeout=timeout_s,
+            )
+            return (resp.choices[0].message.content or "").strip()
+        except Exception as exc:
+            last_exc = exc
+            if not _is_transient(exc) or i == attempts - 1:
+                raise
+            sleep_s = min(30.0, base_sleep * (2 ** i)) * (0.8 + random.random() * 0.4)
+            print(f"[vlm] transient error (attempt {i + 1}/{attempts}), retrying in {sleep_s:.1f}s: {exc}")
+            time.sleep(sleep_s)
+    if last_exc:
+        raise last_exc
+    return ""
 
 
 def _extract_json(s: str) -> Optional[dict]:
