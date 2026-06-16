@@ -59,3 +59,8 @@ api-open-router.txt
 # local eval demo corpus (do not commit)
 double_bench_demo/
 backend/eval/double_bench_demo/
+
+# local test datasets (Excel/Python/C++) — do not commit
+/Excel_Files/
+/Python_Files/
+/Cpp_Files/
