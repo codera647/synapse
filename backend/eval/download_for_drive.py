@@ -97,14 +97,14 @@ def load_queries() -> List[Dict[str, Any]]:
 
 
 # ----------------------------------------------------------------- sample docs
-def sample_docs(queries: List[Dict[str, Any]], n_docs: int, seed: int) -> List[Dict[str, str]]:
+def sample_docs(queries: List[Dict[str, Any]], n_docs: int, seed: int,
+                types: List[str]) -> List[Dict[str, str]]:
     by_type: Dict[str, set] = defaultdict(set)
     for q in queries:
         by_type[q["doc_type"]].add(q["doc_path"])
     rng = random.Random(seed)
-    # balanced target per type (pdf/scanned/html)
-    types = ["pdf", "scanned", "html"]
-    per = [n_docs // 3 + (1 if i < n_docs % 3 else 0) for i in range(3)]
+    nt = max(1, len(types))
+    per = [n_docs // nt + (1 if i < n_docs % nt else 0) for i in range(nt)]   # balanced across types
     chosen: List[Dict[str, str]] = []
     for t, k in zip(types, per):
         pool = sorted(by_type.get(t, []))
@@ -308,6 +308,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="./double_bench_demo")
     ap.add_argument("--docs", type=int, default=100)
+    ap.add_argument("--types", default="pdf,scanned,html",
+                    help="comma-separated doc types to balance across, e.g. 'pdf,scanned'")
     ap.add_argument("--seed", type=int, default=17)
     ap.add_argument("--source", choices=["ocr", "images", "searchable"], default="ocr",
                     help="ocr = digital text PDFs (Synapse-readable); images = ORIGINAL page-image PDFs; "
@@ -317,8 +319,9 @@ def main() -> None:
     pdfs = out / "pdfs"
     pdfs.mkdir(parents=True, exist_ok=True)
 
+    types = [t.strip() for t in args.types.split(",") if t.strip()]
     queries = load_queries()
-    chosen = sample_docs(queries, args.docs, args.seed)
+    chosen = sample_docs(queries, args.docs, args.seed, types)
     built = 0
 
     if args.source in ("images", "searchable"):
