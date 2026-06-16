@@ -6,6 +6,7 @@ import {
   FiArrowUp, FiBarChart2, FiCheck, FiFileText, FiFile, FiPaperclip, FiPlus, FiX, FiZap,
 } from "react-icons/fi";
 import AgentArtifact, { type AgentArtifactData } from "@/components/AgentArtifact";
+import ChatMarkdown from "@/components/ChatMarkdown";
 
 type OrgLite = { id: string; name: string };
 type LibraryLite = { id: string; name: string };
@@ -434,7 +435,9 @@ function MessageRow({ m, onAnswer }: { m: AgentMsg; onAnswer: (ans: string) => v
   return (
     <div>
       <div className="text-[11px] font-semibold text-white/50">Agent</div>
-      <div className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-white/85">{m.content}</div>
+      <div className="mt-1 text-sm text-white/85">
+        <ChatMarkdown content={m.content} />
+      </div>
       {(m.artifacts || []).map((a) => (
         <AgentArtifact key={a.artifact_id} artifact={a} />
       ))}
