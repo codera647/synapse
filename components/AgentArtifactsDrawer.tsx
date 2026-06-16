@@ -25,10 +25,6 @@ export default function AgentArtifactsDrawer({
 
   useEffect(() => {
     if (!open || !organization?.id) return;
-    if (mode !== "visuals") {
-      setItems([]);
-      return;
-    }
     let alive = true;
     setLoading(true);
     (async () => {
