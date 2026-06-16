@@ -1248,10 +1248,14 @@ def _chat_impl(req: ChatRequest):
         # --- Sources: prefer the docs that actually contributed notes; fall back to all rows.
         sources = _build_sources_from(source_items, meta, limit=20)
 
-        # Show sources if the model says it used evidence OR retrieval confidence is high
-        # (prevents hiding sources due to a bad self-report).
-        retrieval_confident = _max_row_score(rows) >= _min_source_score()
-        if not sources_used and not retrieval_confident:
+        # Only attach sources when the answer is actually GROUNDED: the model self-reported using
+        # evidence (SOURCES_USED: yes, or the marker was absent -> conservative default) OR it emitted
+        # at least one citation. A refusal ("I don't have enough information") reports SOURCES_USED: no
+        # and cites nothing, so we drop the retrieved chunks rather than show an irrelevant source
+        # under a rejection. (Previously a high retrieval score could resurrect sources here, which
+        # surfaced an unrelated chunk beneath an "I can't answer" reply.)
+        grounded = sources_used or len(citations_out) > 0
+        if not grounded:
             sources = []
 
         # Eval signals: retrieval_confidence (CRAG grade if it ran, else max row score), and
