@@ -38,6 +38,11 @@ try:
 except Exception:  # pragma: no cover
     pipeline_router = None
 
+try:
+    from agent_api import router as agent_router  # type: ignore
+except Exception:  # pragma: no cover
+    agent_router = None
+
 
 app = FastAPI(title="Synapse Backend", version="1.0.0")
 
@@ -96,6 +101,9 @@ if chat_router is not None:
 
 if pipeline_router is not None:
     app.include_router(pipeline_router)
+
+if agent_router is not None:
+    app.include_router(agent_router)
 
 
 _worker_stop = None

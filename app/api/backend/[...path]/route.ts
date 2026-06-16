@@ -60,8 +60,8 @@ async function proxy(request: NextRequest, method: "GET" | "POST", path: string[
     // Chat/compact can legitimately take a while (multi-agent reasoning + long answers); other
     // endpoints should be snappy. The chat budget is env-tunable via BACKEND_CHAT_TIMEOUT_MS.
     const joined = (path ?? []).join("/").toLowerCase();
-    const isChat = joined === "chat" || joined === "chat/compact";
-    const timeoutMs = isChat ? Number(process.env.BACKEND_CHAT_TIMEOUT_MS || 240000) : 10000;
+    const isLongRunning = joined === "chat" || joined === "chat/compact" || joined === "agent/run";
+    const timeoutMs = isLongRunning ? Number(process.env.BACKEND_CHAT_TIMEOUT_MS || 240000) : 10000;
 
     try {
         const controller = new AbortController();

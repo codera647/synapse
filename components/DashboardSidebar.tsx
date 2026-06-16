@@ -2,11 +2,12 @@
 
 import { useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FiBox, FiUsers, FiMessageSquare, FiActivity, FiMonitor } from "react-icons/fi";
+import { FiBox, FiUsers, FiMessageSquare, FiActivity, FiMonitor, FiZap } from "react-icons/fi";
 
 const menuItems = [
     { key: "libraries", label: "Libraries", icon: FiBox },
     { key: "chat", label: "Chat", icon: FiMessageSquare },
+    { key: "agent", label: "Agent", icon: FiZap },
     { key: "team", label: "Team", icon: FiUsers },
     { key: "usage", label: "Usage", icon: FiActivity },
 ];
@@ -23,7 +24,7 @@ export default function DashboardSidebar({
 
     const activeKey = useMemo(() => {
         const tab = (searchParams.get("tab") || "libraries").toLowerCase();
-        return tab === "chat" || tab === "team" || tab === "usage" ? tab : "libraries";
+        return tab === "chat" || tab === "agent" || tab === "team" || tab === "usage" ? tab : "libraries";
     }, [searchParams]);
 
     return (
