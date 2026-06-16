@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  FiArrowUp, FiBarChart2, FiCheck, FiClock, FiFileText, FiFile, FiImage, FiPaperclip, FiPlus, FiX, FiZap,
+  FiAlertTriangle, FiArrowUp, FiBarChart2, FiCheck, FiClock, FiFileText, FiFile, FiImage, FiPaperclip, FiPlus, FiX, FiZap,
 } from "react-icons/fi";
 import AgentArtifact, { type AgentArtifactData } from "@/components/AgentArtifact";
 import AgentArtifactsDrawer from "@/components/AgentArtifactsDrawer";
@@ -51,6 +51,8 @@ export default function AgentPanel({
   const [visualTypes, setVisualTypes] = useState<Set<string>>(new Set(["bar", "line"]));
   const [action, setAction] = useState<"visuals" | "docs" | "pdf">("visuals");
   const [uploads, setUploads] = useState<Upload[]>([]);
+  const [uploadingNames, setUploadingNames] = useState<string[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<AgentMsg[]>([]);
   const [runId, setRunId] = useState<string | null>(null);
@@ -185,8 +187,14 @@ export default function AgentPanel({
     });
 
   const uploadFiles = async (files: FileList | File[]) => {
-    if (!organization?.id) return;
-    for (const file of Array.from(files)) {
+    if (!organization?.id) {
+      setUploadError("Still loading your account — try the upload again in a moment.");
+      return;
+    }
+    setUploadError(null);
+    const list = Array.from(files);
+    setUploadingNames((prev) => [...prev, ...list.map((f) => f.name)]);
+    for (const file of list) {
       try {
         const fd = new FormData();
         fd.append("file", file);
@@ -194,11 +202,15 @@ export default function AgentPanel({
         if (currentUserId) fd.append("created_by_user_id", currentUserId);
         if (runId) fd.append("run_id", runId);
         const res = await fetch("/api/agent/upload", { method: "POST", body: fd });
-        const j = (await res.json()) as Upload & { error?: string };
-        if (!res.ok || j.error || !j.upload_id) throw new Error(j.error || `upload ${res.status}`);
+        const j = (await res.json().catch(() => ({}))) as Upload & { error?: string };
+        if (!res.ok || j.error || !j.upload_id) throw new Error(j.error || `upload failed (HTTP ${res.status})`);
         setUploads((prev) => [...prev, { upload_id: j.upload_id, filename: j.filename, kind: j.kind, preview: j.preview }]);
       } catch (e) {
+        const msg = e instanceof Error ? e.message : "upload failed";
+        setUploadError(`Couldn't upload ${file.name}: ${msg}`);
         onLog?.({ level: "error", message: "Agent: file upload failed", details: e });
+      } finally {
+        setUploadingNames((prev) => prev.filter((n) => n !== file.name));
       }
     }
   };
@@ -490,21 +502,38 @@ export default function AgentPanel({
         )}
       </div>
 
-      {/* Attached files */}
-      {uploads.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1.5">
+      {/* Attached files / upload status */}
+      {uploads.length > 0 || uploadingNames.length > 0 || uploadError ? (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {uploads.map((u) => (
             <span key={u.upload_id} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/70">
               <FiPaperclip className="h-3 w-3 text-violet-300" />
               <span className="max-w-[14rem] truncate">{u.filename}</span>
               {u.kind === "structured" && u.preview?.columns ? (
                 <span className="text-white/35">({u.preview.columns.length} cols)</span>
-              ) : null}
+              ) : (
+                <span className="text-white/35">(text)</span>
+              )}
               <button type="button" onClick={() => setUploads((prev) => prev.filter((x) => x.upload_id !== u.upload_id))}>
                 <FiX className="h-3 w-3 text-white/40 hover:text-white" />
               </button>
             </span>
           ))}
+          {uploadingNames.map((n) => (
+            <span key={n} className="inline-flex items-center gap-1.5 rounded-lg border border-violet-400/30 bg-violet-500/10 px-2 py-1 text-[11px] text-violet-200">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-violet-300" />
+              <span className="max-w-[14rem] truncate">Uploading {n}…</span>
+            </span>
+          ))}
+          {uploadError ? (
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1 text-[11px] text-red-200">
+              <FiAlertTriangle className="h-3 w-3" />
+              <span className="max-w-[28rem] truncate" title={uploadError}>{uploadError}</span>
+              <button type="button" onClick={() => setUploadError(null)}>
+                <FiX className="h-3 w-3 text-red-300/70 hover:text-white" />
+              </button>
+            </span>
+          ) : null}
         </div>
       ) : null}
 
