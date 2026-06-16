@@ -457,7 +457,9 @@ def _owner_configs_for_libs(lib_ids: set) -> list:
 
 
 def _global_cap() -> int:
-    return max(1, int(os.getenv("POOL_MAX_WORKERS", "5")))
+    # High by default = honour the user's per-stage settings. It's only a runaway backstop (e.g.,
+    # many stages overlapping); lower POOL_MAX_WORKERS on a tiny-RAM box if needed.
+    return max(1, int(os.getenv("POOL_MAX_WORKERS", "64")))
 
 
 def _apply_global_cap(targets: dict, cap: int) -> dict:
@@ -499,7 +501,6 @@ def _compute_targets() -> dict:
         all_libs |= libs
     owner_cfgs = _owner_configs_for_libs(all_libs)
     auto = _auto_suggested()
-    model_cap = max(1, int(os.getenv("POOL_MODEL_STAGE_MAX", "1")))
 
     def _cfg_max(stage: str) -> int:
         vals = [c[stage] for c in owner_cfgs if stage in c]
@@ -513,11 +514,10 @@ def _compute_targets() -> dict:
                 pass
         return int(auto.get(stage, 0))
 
+    # Honour each stage's configured worker count, limited only by how many batches are actually
+    # waiting for that stage (no point spawning 8 sync workers for 3 pending batches).
     for stage, (count, _libs) in pending.items():
-        want = min(_cfg_max(stage), count)
-        if stage in _MODEL_STAGES:
-            want = min(want, model_cap)
-        targets[stage] = max(0, want)
+        targets[stage] = max(0, min(_cfg_max(stage), count))
     return _apply_global_cap(targets, _global_cap())
 
 
