@@ -1257,6 +1257,20 @@ def _chat_impl(req: ChatRequest):
         # Eval signals: retrieval_confidence (CRAG grade if it ran, else max row score), and
         # `abstained` = the answer is not backed by any grounded source (no evidence stood behind it).
         retrieval_confidence = _crag_conf if _crag_conf is not None else _max_row_score(rows)
+
+        # Optional abstention: if the evidence is weak (confidence below threshold), refuse honestly
+        # instead of answering from thin/irrelevant context. Off by default (threshold 0) to preserve
+        # behavior; enable via CHAT_ABSTAIN_MIN_CONFIDENCE. Sources are kept for transparency.
+        _abstain_threshold = float(os.getenv("CHAT_ABSTAIN_MIN_CONFIDENCE", "0") or 0)
+        _forced_abstain = _abstain_threshold > 0 and float(retrieval_confidence or 0.0) < _abstain_threshold
+        if _forced_abstain:
+            answer = (
+                "I don't have enough reliable evidence in this library to answer that confidently. "
+                "The most relevant passages I found are listed below, but they don't clearly support an answer."
+            )
+            citations_out = []
+            visuals_out = []
+
         payload = {
             "answer": answer,
             "sources": sources,
@@ -1265,7 +1279,7 @@ def _chat_impl(req: ChatRequest):
             "followups": followups,
             "query_class": query_class,
             "thinking_mode": mode,
-            "abstained": len(sources) == 0,
+            "abstained": _forced_abstain or (len(sources) == 0),
             "retrieval_confidence": round(float(retrieval_confidence or 0.0), 4),
             "metrics": {"elapsed_ms": int((time.time() - _t0) * 1000)},
             "client_request_id": req.client_request_id,

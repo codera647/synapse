@@ -32,6 +32,25 @@ def score_rows(rows: List[Dict[str, Any]], ragas_llm: str = "gpt-4o-mini") -> Di
     if not q:
         return {"error": "no judged rows with contexts", "n": 0}
     try:
+        # ragas' import chain pulls langchain_community, whose newer releases REMOVED the vertexai
+        # chat-model submodule that older ragas still references -> "No module named
+        # langchain_community.chat_models.vertexai". We only use OpenAI, so the vertexai path is never
+        # actually called; stub the dead submodules so the import chain survives (avoids reinstalling
+        # langchain, which would risk the torch/surya pins on the VM).
+        import sys
+        import types
+
+        class _AnyAttr(types.ModuleType):
+            def __getattr__(self, name):  # any symbol resolves to a harmless placeholder class
+                return type(name, (), {})
+
+        for _m in (
+            "langchain_community.chat_models.vertexai",
+            "langchain_community.llms.vertexai",
+            "langchain_community.chat_models.vertexai_palm",
+        ):
+            sys.modules.setdefault(_m, _AnyAttr(_m))
+
         from datasets import Dataset
         from ragas import evaluate
         from ragas.metrics import (

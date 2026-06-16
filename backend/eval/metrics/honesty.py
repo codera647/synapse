@@ -16,14 +16,30 @@ from typing import Any, Dict, List
 from eval.metrics.retrieval import hit_at_k
 
 
-def classify(row: Dict[str, Any], k: int = 5, offset: int = 0, match_level: str = "page"):
+def _abstained(chat: Dict[str, Any], abstain_threshold: float) -> bool:
+    """A query is treated as a refusal if the system flagged it abstained, OR (when a threshold is
+    set) its retrieval_confidence fell below it. The threshold lets us re-score an existing run for
+    the honesty/overconfidence tradeoff WITHOUT re-calling the (paid) chat endpoint."""
+    if bool(chat.get("abstained")):
+        return True
+    if abstain_threshold and abstain_threshold > 0:
+        conf = chat.get("retrieval_confidence")
+        try:
+            return float(conf) < abstain_threshold
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def classify(row: Dict[str, Any], k: int = 5, offset: int = 0, match_level: str = "page",
+             abstain_threshold: float = 0.0):
     chat = row.get("chat") or {}
     if "answer" not in chat:
         return None  # not judged
     hit = hit_at_k(row, k, offset, match_level)
     if hit is None:
         return None
-    attempt = not bool(chat.get("abstained"))
+    attempt = not _abstained(chat, abstain_threshold)
     if hit and attempt:
         return "hit_attempt"
     if hit and not attempt:
@@ -33,11 +49,12 @@ def classify(row: Dict[str, Any], k: int = 5, offset: int = 0, match_level: str 
     return "miss_refuse"
 
 
-def score_rows(rows: List[Dict[str, Any]], k: int = 5, offset: int = 0, match_level: str = "page") -> Dict[str, Any]:
+def score_rows(rows: List[Dict[str, Any]], k: int = 5, offset: int = 0, match_level: str = "page",
+               abstain_threshold: float = 0.0) -> Dict[str, Any]:
     counts = {"hit_attempt": 0, "hit_refuse": 0, "miss_attempt": 0, "miss_refuse": 0}
     total = 0
     for row in rows:
-        c = classify(row, k, offset, match_level)
+        c = classify(row, k, offset, match_level, abstain_threshold)
         if c is None:
             continue
         counts[c] += 1
@@ -45,4 +62,5 @@ def score_rows(rows: List[Dict[str, Any]], k: int = 5, offset: int = 0, match_le
     pct = {kk: (round(v / total, 4) if total else None) for kk, v in counts.items()}
     # "overconfidence" = answered without retrieving the evidence (miss & attempt)
     overconfidence = round(counts["miss_attempt"] / total, 4) if total else None
-    return {"counts": counts, "fraction": pct, "n": total, "overconfidence_rate": overconfidence}
+    return {"counts": counts, "fraction": pct, "n": total, "overconfidence_rate": overconfidence,
+            "abstain_threshold": abstain_threshold}

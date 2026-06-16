@@ -96,8 +96,10 @@ def _md_answer(ans: Dict[str, Any]) -> str:
 
 def _md_honesty(h: Dict[str, Any]) -> str:
     f = h.get("fraction", {})
+    thr = h.get("abstain_threshold") or 0
+    note = f" · abstain threshold={thr}" if thr else ""
     return (
-        f"### Honesty / overconfidence (n={h.get('n')})\n\n"
+        f"### Honesty / overconfidence (n={h.get('n')}{note})\n\n"
         f"| hit&attempt | hit&refuse | miss&attempt | miss&refuse | overconfidence |\n"
         f"|---|---|---|---|---|\n"
         f"| {f.get('hit_attempt')} | {f.get('hit_refuse')} | {f.get('miss_attempt')} | "
@@ -115,7 +117,11 @@ def build(cfg) -> Dict[str, Any]:
     match_level = str(rcfg.get("match_level", "page"))
     top_k = int(rcfg.get("top_k", 5))
     judged = [r for r in rows if (r.get("chat") or {}).get("answer")]
-    ragas_llm = (cfg.get("answer") or {}).get("ragas_llm", "gpt-4o-mini")
+    acfg = cfg.get("answer") or {}
+    ragas_llm = acfg.get("ragas_llm", "gpt-4o-mini")
+    # Optional: treat retrieval_confidence < threshold as a refusal when scoring honesty. Re-scores
+    # an existing run for free (no chat re-spend) to show the overconfidence tradeoff.
+    abstain_threshold = float(acfg.get("abstain_threshold", 0) or 0)
 
     report = {
         "run_id": cfg.get("run_id"),
@@ -124,7 +130,8 @@ def build(cfg) -> Dict[str, Any]:
         "n_judged": len(judged),
         "retrieval": retrieval.score_rows(rows, ks=(1, 3, 5), offset=offset, match_level=match_level),
         "answer": _answer_stats(rows),
-        "honesty": honesty.score_rows(judged, k=top_k, offset=offset, match_level=match_level),
+        "honesty": honesty.score_rows(judged, k=top_k, offset=offset, match_level=match_level,
+                                       abstain_threshold=abstain_threshold),
         "citation": citation.score_rows(judged, offset=offset, match_level=match_level),
         "efficiency": efficiency.score_rows(rows),
         "ragas": ragas_suite.score_rows(judged, ragas_llm=ragas_llm),

@@ -42,6 +42,8 @@ answer:
   concurrency: 2
   judges: [gpt-4o, gpt-5.5]             # dual judge
   ragas_llm: gpt-4o-mini                # cheap model for RAGAS internal grading
+  abstain_threshold: 0.0                # >0 = honesty re-scored treating retrieval_confidence below
+                                         # this as a refusal (free; no chat re-spend). Try 0.3–0.5.
 
 # ---- Hard budget cap (never overrun the OpenAI pool) -------------------------------------
 budget:
