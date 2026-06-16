@@ -74,6 +74,27 @@ def main() -> None:
     if not doc_map:
         raise SystemExit("no documents mapped — are the PDF filenames like 'English_0989.pdf'?")
 
+    # Restrict to docs that actually have embeddings (the processed subset). Docs from unfinished /
+    # dropped batches still have a `documents` row but no chunks — querying them would count as forced
+    # misses and unfairly drag the metrics. Keep only the docs Synapse can actually retrieve.
+    emb_doc_ids: set = set()
+    off, PAGE = 0, 1000
+    while True:
+        rows = (sb.table("chunk_embeddings").select("doc_id").eq("library_id", lib_id)
+                .range(off, off + PAGE - 1).execute().data or [])
+        if not rows:
+            break
+        emb_doc_ids.update(r.get("doc_id") for r in rows if r.get("doc_id"))
+        if len(rows) < PAGE:
+            break
+        off += PAGE
+    before = len(doc_map)
+    doc_map = {bench: did for bench, did in doc_map.items() if did in emb_doc_ids}
+    print(f"[bind] restricted to embedded docs: {len(doc_map)}/{before} "
+          f"(dropped {before - len(doc_map)} with no embeddings)")
+    if not doc_map:
+        raise SystemExit("no embedded documents mapped — has embedding finished for this library?")
+
     queries = db.load_queries(cfg)                       # all benchmark queries (both configs)
     sample = [q for q in queries if q["doc_id"] in doc_map]
 
