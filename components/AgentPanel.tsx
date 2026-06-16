@@ -215,6 +215,20 @@ export default function AgentPanel({
     }
   };
 
+  const removeUpload = async (uploadId: string) => {
+    setUploads((prev) => prev.filter((x) => x.upload_id !== uploadId)); // optimistic
+    if (!organization?.id) return;
+    try {
+      await fetch("/api/backend/agent/upload/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ organization_id: organization.id, upload_id: uploadId }),
+      });
+    } catch (e) {
+      onLog?.({ level: "warn", message: "Agent: failed to delete upload from storage", details: e });
+    }
+  };
+
   const newRun = () => {
     setMessages([]);
     setRunId(null);
@@ -514,7 +528,7 @@ export default function AgentPanel({
               ) : (
                 <span className="text-white/35">(text)</span>
               )}
-              <button type="button" onClick={() => setUploads((prev) => prev.filter((x) => x.upload_id !== u.upload_id))}>
+              <button type="button" title="Remove (deletes from storage)" onClick={() => void removeUpload(u.upload_id)}>
                 <FiX className="h-3 w-3 text-white/40 hover:text-white" />
               </button>
             </span>

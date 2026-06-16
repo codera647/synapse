@@ -531,6 +531,28 @@ _ALLOWED_UPLOAD_EXT = (
 )
 
 
+class AgentUploadDelete(BaseModel):
+    organization_id: str
+    upload_id: str
+
+
+@router.post("/agent/upload/delete")
+def agent_upload_delete(req: AgentUploadDelete):
+    """Remove a runtime upload: delete its R2 object (free space) + its agent_uploads row."""
+    try:
+        row = adata.fetch_upload_row(req.upload_id, req.organization_id)
+        if row and row.get("storage_key"):
+            try:
+                adata._s3.delete_object(Bucket=adata._R2_BUCKET, Key=row["storage_key"])
+            except Exception as exc:
+                print(f"[agent] R2 delete failed for {row.get('storage_key')}: {exc}")
+        supabase.table("agent_uploads").delete() \
+            .eq("id", req.upload_id).eq("organization_id", req.organization_id).execute()
+        return {"ok": True}
+    except Exception as exc:
+        return _error_response(exc, "/agent/upload/delete")
+
+
 @router.post("/agent/upload")
 async def agent_upload(
     file: UploadFile = File(...),
