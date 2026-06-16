@@ -115,7 +115,7 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
   }, [logs, filter, query, libraryFilter]);
 
   const pipelineStages = useMemo(
-    () => ["sync", "layout_parser", "text_extraction", "image_captioning", "chunking", "embedding"],
+    () => ["sync", "layout_parser", "text_extraction", "image_captioning", "chunking", "embedding", "clustering"],
     []
   );
 
