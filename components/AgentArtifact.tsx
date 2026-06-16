@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FiAlertTriangle, FiDownload } from "react-icons/fi";
+import { FiAlertTriangle, FiDownload, FiFileText } from "react-icons/fi";
 import { VegaLite } from "react-vega";
-import ChatMarkdown from "@/components/ChatMarkdown";
 
 export type AgentArtifactData = {
   artifact_id: string;
@@ -31,6 +30,9 @@ function artifactUrl(key: string) {
 export default function AgentArtifact({ artifact }: { artifact: AgentArtifactData }) {
   const failed = (artifact.render_status || "ok") !== "ok";
 
+  // Documents/PDFs render as a compact downloadable file card (no inline content).
+  if (isDoc(artifact.format)) return <DocFileCard artifact={artifact} />;
+
   return (
     <div className="flex h-full flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3">
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -40,18 +42,16 @@ export default function AgentArtifact({ artifact }: { artifact: AgentArtifactDat
             <div className="text-[10px] uppercase tracking-wide text-white/35">{artifact.kind}</div>
           ) : null}
         </div>
-        {!failed && (artifact.png_key || artifact.file_key || artifact.markdown_text || artifact.format === "mermaid") ? (
+        {!failed && (artifact.png_key || artifact.format === "mermaid") ? (
           <DownloadButton artifact={artifact} />
         ) : null}
       </div>
 
-      {failed && !isDoc(artifact.format) ? (
+      {failed ? (
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
           <FiAlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>Couldn&apos;t render this visual{artifact.errors?.length ? `: ${artifact.errors.join("; ")}` : "."}</span>
         </div>
-      ) : isDoc(artifact.format) ? (
-        <DocView markdown={artifact.markdown_text || ""} />
       ) : artifact.format === "mermaid" ? (
         <MermaidView text={artifact.mermaid_text || ""} id={artifact.artifact_id} />
       ) : (
@@ -60,6 +60,55 @@ export default function AgentArtifact({ artifact }: { artifact: AgentArtifactDat
 
       {artifact.alt_text ? <div className="mt-1 text-[11px] text-white/35">{artifact.alt_text}</div> : null}
     </div>
+  );
+}
+
+// ── Document / PDF file card (name + download, no inline content) ──────────────────────────────
+function DocFileCard({ artifact }: { artifact: AgentArtifactData }) {
+  const isPdf = artifact.format === "pdf" && !!artifact.file_key;
+  const ext = isPdf ? "pdf" : "md";
+  const base = (artifact.title || "document").trim();
+
+  const download = () => {
+    const fname = base.replace(/[^a-z0-9]+/gi, "_").toLowerCase() || "document";
+    if (isPdf && artifact.file_key) {
+      const a = document.createElement("a");
+      a.href = artifactUrl(artifact.file_key);
+      a.download = `${fname}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return;
+    }
+    const blob = new Blob([artifact.markdown_text || ""], { type: "text/markdown" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${fname}.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={download}
+      title="Click to download"
+      className="group flex w-full items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.06]"
+    >
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-violet-500/30 to-fuchsia-500/20 text-violet-200">
+        <FiFileText className="h-4 w-4" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium text-white/90 group-hover:underline">
+          {base}
+          <span className="text-white/40">.{ext}</span>
+        </span>
+        <span className="block text-[11px] text-white/40">
+          {isPdf ? "PDF document" : "Markdown document"} · click to download
+        </span>
+      </span>
+      <FiDownload className="h-4 w-4 shrink-0 text-white/40 group-hover:text-white" />
+    </button>
   );
 }
 
@@ -97,16 +146,6 @@ function VegaView({ specKey }: { specKey: string }) {
   return (
     <div className="w-full overflow-hidden rounded-lg bg-white p-2 text-center [&_canvas]:!mx-auto [&_canvas]:!h-auto [&_canvas]:!max-w-full [&_svg]:!mx-auto [&_svg]:!h-auto [&_svg]:!max-w-full">
       <VegaLite spec={safe as never} actions={false} renderer="canvas" />
-    </div>
-  );
-}
-
-// ── Document / PDF (markdown preview) ────────────────────────────────────────────────────────
-function DocView({ markdown }: { markdown: string }) {
-  if (!markdown.trim()) return <div className="text-xs text-white/40">Empty document.</div>;
-  return (
-    <div className="max-h-[520px] overflow-auto rounded-lg border border-white/8 bg-white/[0.02] p-3 text-sm text-white/85">
-      <ChatMarkdown content={markdown} />
     </div>
   );
 }

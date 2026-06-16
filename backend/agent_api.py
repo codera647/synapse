@@ -353,13 +353,38 @@ def _gather_doc_context(org_id: str, library_ids: List[str], upload_ids: List[st
     return ("\n\n".join(parts))[:24000], "\n".join(summary_lines), sources_meta
 
 
+def _prior_documents(org_id: str, run_id: str) -> str:
+    """Full text of documents already created earlier in this run, so follow-ups like 'make a PDF of
+    the paper you wrote' can reuse/transform them instead of hallucinating a new one."""
+    try:
+        res = (supabase.table("agent_artifacts")
+               .select("title, markdown_text, created_at")
+               .eq("run_id", run_id).eq("organization_id", org_id)
+               .in_("format", ["document", "pdf"])
+               .order("created_at", desc=True).limit(3).execute())
+    except Exception:
+        return ""
+    parts = []
+    for a in (res.data or []):
+        md = (a.get("markdown_text") or "").strip()
+        if md:
+            parts.append(f"PREVIOUSLY CREATED DOCUMENT — {a.get('title')}:\n{md}")
+    return "\n\n".join(parts)
+
+
 def _run_document_impl(req: "AgentRunRequest", run_id: str, rid: Optional[str], org_id: str, mode: str) -> Dict[str, Any]:
     want_pdf = req.action == "pdf"
     _set_progress(rid, "Reading your sources")
     context, sources_summary, sources_meta = _gather_doc_context(org_id, req.library_ids, req.upload_ids, req.message)
 
+    # Prepend any documents already created in this conversation so the agent can reference/transform them.
+    prior = _prior_documents(org_id, run_id)
+    if prior:
+        context = prior + ("\n\n" + context if context else "")
+        sources_summary = "- (a document you created earlier in this chat)\n" + sources_summary
+
     _set_progress(rid, "Writing the document")
-    doc = aa.write_document(req.message, context, sources_summary, mode=mode)
+    doc = aa.write_document(req.message, context, sources_summary, history=req.history, mode=mode)
     title = doc.get("title") or "Document"
     markdown = doc.get("markdown") or ""
 

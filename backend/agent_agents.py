@@ -174,28 +174,33 @@ _NARRATE_SYSTEM = (
 
 # ── WRITE DOCUMENT (Docs / PDF action) ───────────────────────────────────────────────────────
 _DOC_SYSTEM = (
-    "You are a report-writing agent in Synapse. Using ONLY the provided source content (documents in "
-    "the user's libraries + any attached files), write a well-structured, professional document that "
-    "fulfils the user's request. Return STRICT JSON:\n"
+    "You are a report-writing agent in Synapse. Write a well-structured document that fulfils the "
+    "user's request, GROUNDED in the provided source content (library documents, attached files, and "
+    "any document you created earlier in this conversation). Return STRICT JSON:\n"
     '{ "title": string, "markdown": string }\n\n'
     "RULES:\n"
-    "- Write in GitHub-flavored Markdown: a top structure of clear headings (##, ###), concise prose, "
-    "bullet lists, and Markdown TABLES where data is comparative or tabular.\n"
-    "- Ground every factual claim in the provided sources; do NOT invent facts, numbers, or sources. "
-    "If the sources don't cover something the user asked for, say so briefly.\n"
-    "- Where useful, attribute facts inline like: (Source: <document title>).\n"
-    "- Open with a short summary/abstract, then the body, then a brief conclusion. Keep it focused and "
-    "readable — no filler. Do NOT include the title as an H1 (it is added separately)."
+    "- Write in GitHub-flavored Markdown: clear headings (##, ###), concise prose, bullet lists, and "
+    "Markdown TABLES where data is comparative or tabular. Do NOT include the title as an H1.\n"
+    "- Ground claims in the provided sources; do NOT invent facts, numbers, or citations.\n"
+    "- IMPORTANT — follow-ups: if the user refers to a document you made earlier (e.g. 'make a PDF of "
+    "the paper you just wrote', 'expand the previous report'), that document's full text is included in "
+    "the sources as 'PREVIOUSLY CREATED DOCUMENT'. REUSE/transform THAT content — do NOT write a new, "
+    "unrelated document on the topic.\n"
+    "- HONESTY — if there is genuinely NO relevant source content for what the user asked (no library "
+    "passages, no file, no prior document), do NOT fabricate a full document. Instead return a short "
+    "markdown note saying you couldn't find source material for the request and asking the user to "
+    "attach a file or select a library. Never pad with invented content."
 )
 
 
-def write_document(query: str, context: str, sources_summary: str, *, mode: str = "high") -> Dict[str, Any]:
+def write_document(query: str, context: str, sources_summary: str, *,
+                   history: Optional[List[Dict[str, str]]] = None, mode: str = "high") -> Dict[str, Any]:
     user = (
         f"USER REQUEST:\n{query}\n\n"
-        f"AVAILABLE SOURCES:\n{sources_summary or '(see content below)'}\n\n"
-        f"SOURCE CONTENT (use only this):\n{context[:22000]}"
+        f"AVAILABLE SOURCES:\n{sources_summary or '(none — see content below)'}\n\n"
+        f"SOURCE CONTENT (use only this):\n{context[:22000] or '(no source content was found)'}"
     )
-    out = agent_complete_json(_DOC_SYSTEM, user, mode=mode, max_tokens=8000) or {}
+    out = agent_complete_json(_DOC_SYSTEM, user, mode=mode, max_tokens=8000, history=history) or {}
     title = str(out.get("title") or (query or "Document").strip()[:80])
     markdown = str(out.get("markdown") or "")
     return {"title": title, "markdown": markdown}
