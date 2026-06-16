@@ -564,6 +564,128 @@ export default function ChatPanel({
     );
   };
 
+  // ── Real-time team chat ─────────────────────────────────────────────────────────────────────
+  // Without this, a teammate's question + answer only appear after a manual page refresh. We
+  // subscribe to Supabase Realtime for the OPEN thread and merge inserts/updates into local state
+  // live. RLS still applies (members only receive their org's rows). Requires chat_messages to be in
+  // the `supabase_realtime` publication — see docs/supabase-realtime-chat.sql.
+  useEffect(() => {
+    if (!organization?.id || !activeThreadId) return;
+    const orgId = organization.id;
+    const threadId = activeThreadId;
+
+    const fetchSources = async (messageId: string): Promise<ChatSource[]> => {
+      const { data: srcRows } = await supabase
+        .from("chat_message_sources")
+        .select("message_id, library_id, doc_id, doc_title, storage_path_raw, chunk_id, page_start, page_end, score")
+        .eq("organization_id", orgId)
+        .eq("message_id", messageId);
+      if (!Array.isArray(srcRows) || srcRows.length === 0) return [];
+      const docIds = Array.from(
+        new Set((srcRows as SourceRow[]).map((r) => String(r.doc_id || "").trim()).filter(Boolean))
+      );
+      const docMetaById: Record<string, { title?: string | null; gdrive_file_id?: string | null; path_in_source?: string | null; storage_path_raw?: string | null }> = {};
+      if (docIds.length > 0) {
+        const { data: docs } = await supabase
+          .from("documents")
+          .select("id,title,gdrive_file_id,path_in_source,storage_path_raw")
+          .in("id", docIds);
+        if (Array.isArray(docs)) {
+          for (const d of docs as Array<{ id: string; title?: string | null; gdrive_file_id?: string | null; path_in_source?: string | null; storage_path_raw?: string | null }>) {
+            docMetaById[String(d.id)] = {
+              title: d.title ?? null,
+              gdrive_file_id: d.gdrive_file_id ?? null,
+              path_in_source: d.path_in_source ?? null,
+              storage_path_raw: d.storage_path_raw ?? null,
+            };
+          }
+        }
+      }
+      return (srcRows as SourceRow[]).map((r) => {
+        const dm = r.doc_id ? docMetaById[String(r.doc_id)] : undefined;
+        return {
+          library_id: String(r.library_id || ""),
+          doc_id: String(r.doc_id || ""),
+          doc_title: r.doc_title ?? dm?.title ?? null,
+          storage_path_raw: r.storage_path_raw ?? dm?.storage_path_raw ?? null,
+          gdrive_file_id: dm?.gdrive_file_id ?? null,
+          path_in_source: dm?.path_in_source ?? null,
+          chunk_id: r.chunk_id ?? null,
+          page_start: typeof r.page_start === "number" ? r.page_start : null,
+          page_end: typeof r.page_end === "number" ? r.page_end : null,
+          score: typeof r.score === "number" ? r.score : null,
+        };
+      });
+    };
+
+    const upsertIncoming = (incoming: ChatMessage) => {
+      setMessagesByThread((prev) => {
+        const existing = prev[threadId] ?? [];
+        // Already have this DB row → update in place.
+        const byId = existing.findIndex((m) => m.id === incoming.id);
+        if (byId >= 0) {
+          const copy = [...existing];
+          copy[byId] = { ...copy[byId], ...incoming, sources: incoming.sources ?? copy[byId].sources };
+          return { ...prev, [threadId]: copy };
+        }
+        // Our own optimistic copy (same role + identical content) → reconcile its id, don't duplicate.
+        const c = incoming.content.trim();
+        const optIdx = c
+          ? existing.findIndex((m) => m.role === incoming.role && m.content.trim() === c)
+          : -1;
+        if (optIdx >= 0) {
+          const copy = [...existing];
+          copy[optIdx] = {
+            ...copy[optIdx],
+            id: incoming.id,
+            status: incoming.status ?? copy[optIdx].status,
+            senderId: incoming.senderId ?? copy[optIdx].senderId,
+            sources: copy[optIdx].sources ?? incoming.sources,
+          };
+          return { ...prev, [threadId]: copy };
+        }
+        // A teammate's new message → append in time order.
+        const next = [...existing, incoming].sort((a, b) => a.ts - b.ts);
+        return { ...prev, [threadId]: next };
+      });
+    };
+
+    const handleRow = async (row: Record<string, unknown> | null) => {
+      if (!row || !row.id) return;
+      const incoming: ChatMessage = {
+        id: String(row.id),
+        role: String(row.role || "assistant") as ChatMessage["role"],
+        content: String(row.content || ""),
+        ts: new Date(String(row.created_at || new Date().toISOString())).getTime(),
+        status: (String(row.status || "done") as ChatMessage["status"]) || "done",
+        senderId: (row.created_by_user_id as string | null) ?? null,
+      };
+      if (incoming.role === "assistant" && incoming.content.trim()) {
+        incoming.sources = await fetchSources(incoming.id);
+      }
+      upsertIncoming(incoming);
+    };
+
+    const channel = supabase
+      .channel(`chat-thread-${threadId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "chat_messages", filter: `thread_id=eq.${threadId}` },
+        (payload) => { void handleRow(payload.new as Record<string, unknown>); }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "chat_messages", filter: `thread_id=eq.${threadId}` },
+        (payload) => { void handleRow(payload.new as Record<string, unknown>); }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organization?.id, activeThreadId]);
+
   const getThreadSummary = (threadId: string) => {
     const msgs = messagesByThread[threadId] ?? [];
     for (const m of msgs) {
