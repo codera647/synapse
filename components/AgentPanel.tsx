@@ -507,7 +507,7 @@ export default function AgentPanel({
             </div>
           </div>
         ) : (
-          <div className="mx-auto w-full max-w-4xl space-y-5">
+          <div className="mx-auto w-full max-w-6xl space-y-5">
             {messages.map((m) => (
               <MessageRow key={m.id} m={m} onAnswer={(ans) => void run(ans)} onType={() => textareaRef.current?.focus()} />
             ))}
@@ -626,7 +626,7 @@ function MessageRow({ m, onAnswer, onType }: { m: AgentMsg; onAnswer: (ans: stri
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-600 px-4 py-2 text-sm text-white">
+        <div className="max-w-2xl rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-600 px-4 py-2 text-sm text-white">
           {m.content}
         </div>
       </div>
@@ -637,7 +637,7 @@ function MessageRow({ m, onAnswer, onType }: { m: AgentMsg; onAnswer: (ans: stri
   }
   if (m.role === "clarification") {
     return (
-      <div className="rounded-2xl border border-violet-400/25 bg-violet-500/10 p-4">
+      <div className="max-w-3xl rounded-2xl border border-violet-400/25 bg-violet-500/10 p-4">
         <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-violet-200">
           A quick clarification before I build this
         </div>
@@ -697,7 +697,7 @@ function MessageRow({ m, onAnswer, onType }: { m: AgentMsg; onAnswer: (ans: stri
   return (
     <div>
       <div className="text-[11px] font-semibold text-white/50">Agent</div>
-      <div className="mt-1 text-sm text-white/85">
+      <div className="mt-1 max-w-3xl text-sm text-white/85">
         <ChatMarkdown content={m.content} />
       </div>
       {(() => {
@@ -707,7 +707,7 @@ function MessageRow({ m, onAnswer, onType }: { m: AgentMsg; onAnswer: (ans: stri
         return (
           <>
             {docs.length > 0 ? (
-              <div className="mt-2 space-y-3">
+              <div className="mt-2 max-w-3xl space-y-3">
                 {docs.map((a) => (
                   <AgentArtifact key={a.artifact_id} artifact={a} />
                 ))}
