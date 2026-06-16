@@ -151,10 +151,13 @@ function VegaView({ specKey }: { specKey: string }) {
   // avoids Vega's width:"container" measuring 0 in a grid cell / drawer (which renders a blank chart),
   // while still shrinking the chart so several fit per row. The download PNG stays full resolution.
   const safe: Record<string, unknown> = { ...spec };
-  if (safe.width === "container") delete safe.width; // container width needs measurement -> blank in cells
+  // Force a prominent fixed width (container-width measures 0 in grid cells -> blank; and CSS only
+  // shrinks, so a small natural width left charts tiny). CSS max-w-full scales it down on narrow cells.
+  const w = (safe as { width?: unknown }).width;
+  if (typeof w !== "number" || w < 420) safe.width = 620;
   if (safe.autosize && typeof safe.autosize === "object") delete safe.autosize;
   return (
-    <div className="w-full overflow-hidden rounded-lg bg-white p-2 text-center [&_canvas]:!mx-auto [&_canvas]:!h-auto [&_canvas]:!max-w-full [&_svg]:!mx-auto [&_svg]:!h-auto [&_svg]:!max-w-full">
+    <div className="w-full overflow-hidden rounded-lg bg-white p-3 text-center [&_canvas]:!mx-auto [&_canvas]:!h-auto [&_canvas]:!max-w-full [&_svg]:!mx-auto [&_svg]:!h-auto [&_svg]:!max-w-full">
       <VegaLite spec={safe as never} actions={false} renderer="canvas" />
     </div>
   );
