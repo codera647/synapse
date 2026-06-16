@@ -671,28 +671,36 @@ def run_text_extraction_stage_job(stage_job):
                 # so digital pages keep their native text and pay nothing.
                 page_chars = sum(len((b.get("text") or "").strip()) for b in out_blocks)
                 if page_chars < min_chars and _vlm_scanned_enabled():
-                    try:
-                        import vlm_client
+                    import vlm_client
 
-                        img = _render_page_image(page, int(os.getenv("EXTRACT_VLM_DPI", "150")))
+                    img = _render_page_image(page, int(os.getenv("EXTRACT_VLM_DPI", "150")))
+                    try:
                         vtext = (vlm_client.transcribe_page(img) or "").strip()
-                        if vtext:
-                            out_blocks.append({
-                                "block_id": f"p{page_index}_vlm",
-                                "page": page_index,
-                                "type": "text",
-                                "kind": "text",
-                                "score": 1.0,
-                                "bbox_img": None,
-                                "bbox_pdf": None,
-                                "text": vtext,
-                                "char_count": len(vtext),
-                                "needs_ocr": False,
-                                "source": "vlm_page_transcription",
-                            })
-                            print(f"[extract] doc={doc_id} VLM-transcribed scanned page {page_index} ({len(vtext)} chars)")
                     except Exception as exc:
-                        print(f"[extract] doc={doc_id} VLM transcription failed page {page_index}: {exc}")
+                        # Hard VLM failure (out of OpenRouter credits / persistent network after
+                        # retries). FAIL the batch with a clear reason so it can be re-run from
+                        # extraction on Resume — instead of silently writing an empty doc that only
+                        # blows up later at embedding ("no embeddings").
+                        if vlm_client.is_out_of_credits(exc):
+                            raise RuntimeError(
+                                "VLM provider is out of credits — top up OpenRouter, then Resume."
+                            )
+                        raise RuntimeError(f"VLM page transcription failed (page {page_index}): {exc}")
+                    if vtext:
+                        out_blocks.append({
+                            "block_id": f"p{page_index}_vlm",
+                            "page": page_index,
+                            "type": "text",
+                            "kind": "text",
+                            "score": 1.0,
+                            "bbox_img": None,
+                            "bbox_pdf": None,
+                            "text": vtext,
+                            "char_count": len(vtext),
+                            "needs_ocr": False,
+                            "source": "vlm_page_transcription",
+                        })
+                        print(f"[extract] doc={doc_id} VLM-transcribed scanned page {page_index} ({len(vtext)} chars)")
 
                 out_pages.append({"page": page_index, "blocks": out_blocks})
                 all_links.extend(_compute_links(out_blocks))

@@ -206,17 +206,23 @@ _PAGE_PROMPT = (
 
 def transcribe_page(img) -> Optional[str]:
     """Full-page transcription via the VLM for scanned/image pages — captures body text, tables
-    (as Markdown), and figures (described + data extracted). Handles multi-column reading order."""
+    (as Markdown), and figures (described + data extracted). Handles multi-column reading order.
+
+    NOTE: this propagates a hard failure (e.g., out of OpenRouter credits / persistent network after
+    retries) so the EXTRACTION stage fails loudly instead of silently producing an empty doc. The
+    caller decides what to do."""
     if not is_configured() or img is None:
         return None
-    try:
-        content = [
-            {"type": "text", "text": _PAGE_PROMPT},
-            {"type": "image_url", "image_url": {"url": _img_to_data_url(img)}},
-        ]
-        return _chat([{"role": "user", "content": content}], max_tokens=int(os.getenv("CAPTION_VLM_PAGE_MAX_TOKENS", "3000")))
-    except Exception:
-        return None
+    content = [
+        {"type": "text", "text": _PAGE_PROMPT},
+        {"type": "image_url", "image_url": {"url": _img_to_data_url(img)}},
+    ]
+    return _chat([{"role": "user", "content": content}], max_tokens=int(os.getenv("CAPTION_VLM_PAGE_MAX_TOKENS", "3000")))
+
+
+def is_out_of_credits(exc: Exception) -> bool:
+    m = (str(exc) or "").lower()
+    return any(k in m for k in ("insufficient", "credit", "402", "payment", "quota", "billing"))
 
 
 def ocr_image(crop) -> Optional[str]:
