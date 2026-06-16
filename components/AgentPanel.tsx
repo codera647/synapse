@@ -19,7 +19,7 @@ type AgentMsg = {
   role: "user" | "assistant" | "clarification" | "system";
   content: string;
   artifacts?: AgentArtifactData[];
-  questions?: Array<{ question: string; why?: string; options?: string[] }>;
+  questions?: Array<{ question: string; why?: string; options?: string[]; recommended?: string }>;
 };
 
 const VISUAL_TYPES: Array<{ key: string; label: string }> = [
@@ -68,6 +68,7 @@ export default function AgentPanel({
   const historyRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -237,15 +238,15 @@ export default function AgentPanel({
     setPrompt("");
   };
 
-  const run = async () => {
-    const text = prompt.trim();
+  const run = async (override?: string) => {
+    const text = (override ?? prompt).trim();
     if (!text || running || !organization?.id) return;
     const rid = (crypto as { randomUUID?: () => string }).randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
     setMessages((prev) => [...prev, { id: `${rid}-u`, role: "user", content: text }]);
     setRunning(true);
     setRunningAction(action);
     setStatus(action === "image" ? "Generating image…" : "Starting…");
-    setPrompt("");
+    if (!override) setPrompt("");
 
     const history = messages
       .filter((m) => m.role === "user" || m.role === "assistant")
@@ -287,7 +288,7 @@ export default function AgentPanel({
         message_id?: string;
         narrative?: string;
         artifacts?: AgentArtifactData[];
-        clarifying_questions?: Array<{ question: string; why?: string; options?: string[] }>;
+        clarifying_questions?: Array<{ question: string; why?: string; options?: string[]; recommended?: string }>;
       };
       if (!res.ok || j.error) throw new Error(j.error || `run ${res.status}`);
       if (j.run_id) setRunId(j.run_id);
@@ -506,9 +507,9 @@ export default function AgentPanel({
             </div>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="mx-auto w-full max-w-4xl space-y-5">
             {messages.map((m) => (
-              <MessageRow key={m.id} m={m} onAnswer={(ans) => { setPrompt(ans); }} />
+              <MessageRow key={m.id} m={m} onAnswer={(ans) => void run(ans)} onType={() => textareaRef.current?.focus()} />
             ))}
             {running && runningAction === "image" ? (
               <div>
@@ -590,6 +591,7 @@ export default function AgentPanel({
             }}
           />
           <textarea
+            ref={textareaRef}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => {
@@ -620,7 +622,7 @@ export default function AgentPanel({
   );
 }
 
-function MessageRow({ m, onAnswer }: { m: AgentMsg; onAnswer: (ans: string) => void }) {
+function MessageRow({ m, onAnswer, onType }: { m: AgentMsg; onAnswer: (ans: string) => void; onType: () => void }) {
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
@@ -635,34 +637,59 @@ function MessageRow({ m, onAnswer }: { m: AgentMsg; onAnswer: (ans: string) => v
   }
   if (m.role === "clarification") {
     return (
-      <div className="rounded-2xl border border-violet-400/25 bg-violet-500/10 p-3">
-        <div className="mb-2 text-xs font-medium text-violet-200">A quick clarification before I build this:</div>
+      <div className="rounded-2xl border border-violet-400/25 bg-violet-500/10 p-4">
+        <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-violet-200">
+          A quick clarification before I build this
+        </div>
         {(!m.questions || m.questions.length === 0) && m.content ? (
           <div className="whitespace-pre-wrap text-sm text-white/85">{m.content}</div>
         ) : null}
-        <div className="space-y-2">
-          {(m.questions || []).map((q, i) => (
-            <div key={i}>
-              <div className="text-sm text-white/85">{q.question}</div>
-              {q.why ? <div className="text-[11px] text-white/40">{q.why}</div> : null}
-              {q.options && q.options.length ? (
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {q.options.map((o, j) => (
-                    <button
-                      key={j}
-                      type="button"
-                      onClick={() => onAnswer(o)}
-                      className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/70 hover:text-white"
-                    >
-                      {o}
-                    </button>
-                  ))}
+        <div className="space-y-4">
+          {(m.questions || []).map((q, i) => {
+            const rec = (q.recommended || "").trim();
+            return (
+              <div key={i}>
+                <div className="text-sm font-medium text-white/90">{q.question}</div>
+                <div className="mt-2 grid gap-1.5">
+                  {(q.options || []).map((o, j) => {
+                    const isRec = rec && o.trim() === rec;
+                    return (
+                      <button
+                        key={j}
+                        type="button"
+                        onClick={() => onAnswer(o)}
+                        className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm transition-colors ${
+                          isRec
+                            ? "border-violet-400/60 bg-violet-500/15 text-white"
+                            : "border-white/10 bg-white/[0.03] text-white/80 hover:bg-white/[0.07]"
+                        }`}
+                      >
+                        <span>{o}</span>
+                        {isRec ? (
+                          <span className="shrink-0 rounded-full bg-violet-500/30 px-2 py-0.5 text-[10px] font-semibold text-violet-100">
+                            ★ Recommended
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={onType}
+                    className="rounded-xl border border-dashed border-white/15 px-3 py-2 text-left text-sm text-white/50 hover:text-white"
+                  >
+                    Other — type your own answer below…
+                  </button>
                 </div>
-              ) : null}
-            </div>
-          ))}
+                {q.why ? (
+                  <div className="mt-2 text-[11px] text-white/45">
+                    <span className="text-violet-200/80">Why this:</span> {q.why}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
-        <div className="mt-2 text-[11px] text-white/40">Answer in the box below to continue.</div>
       </div>
     );
   }

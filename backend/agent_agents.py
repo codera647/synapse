@@ -27,7 +27,8 @@ _PLAN_SYSTEM = (
     "{\n"
     '  "intent": string,                       // one sentence restating what to visualize\n'
     '  "ambiguous": boolean,\n'
-    '  "clarifying_questions": [ {"question": string, "why": string, "options": [string]} ],\n'
+    '  "clarifying_questions": [ {"question": string, "why": string, "options": [string], '
+    '"recommended": string} ],\n'
     '  "assumptions": [string],                 // choices you made when proceeding without asking\n'
     '  "data_needs": [ {\n'
     '     "id": string, "description": string,\n'
@@ -45,6 +46,9 @@ _PLAN_SYSTEM = (
     "Otherwise set ambiguous=false, pick the best interpretation, and record every choice in "
     "assumptions. Default to PROCEEDING — the user prefers a good artifact with stated assumptions "
     "over being asked.\n"
+    "- Each clarifying question MUST give 3-4 concrete `options`, set `recommended` to the single best "
+    "option (it MUST be one of `options`), and put a one-sentence reason in `why`. The user may also "
+    "type their own answer.\n"
     "- proposed_visuals[].kind MUST be one of the allowed visual types given. Map each visual to the "
     "data_needs it uses. Prefer the chart type that best fits the data; note better alternatives in "
     "recommendations.\n"

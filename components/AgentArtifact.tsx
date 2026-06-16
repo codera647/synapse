@@ -171,7 +171,7 @@ function MermaidView({ text, id }: { text: string; id: string }) {
     (async () => {
       try {
         const mermaid = (await import("mermaid")).default;
-        mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
+        mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "strict" });
         const { svg: out } = await mermaid.render(`m-${id.replace(/[^a-z0-9]/gi, "")}`, text);
         if (alive) setSvg(out);
       } catch (e) {
@@ -187,7 +187,7 @@ function MermaidView({ text, id }: { text: string; id: string }) {
   if (!svg) return <div className="h-40 animate-pulse rounded-lg bg-white/5" />;
   return (
     <div
-      className="max-h-[340px] w-full overflow-auto rounded-lg bg-[#0d0b1a] p-2 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
+      className="max-h-[340px] w-full overflow-auto rounded-lg bg-white p-2 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
       data-mermaid-id={id}
       dangerouslySetInnerHTML={{ __html: svg }}
     />
@@ -243,7 +243,7 @@ function DownloadButton({ artifact }: { artifact: AgentArtifactData }) {
         canvas.height = (svgEl.clientHeight || 600) * scale;
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
-        ctx.fillStyle = "#0d0b1a";
+        ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         const a = document.createElement("a");
