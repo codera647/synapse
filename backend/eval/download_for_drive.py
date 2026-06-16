@@ -117,20 +117,65 @@ def sample_docs(queries: List[Dict[str, Any]], n_docs: int, seed: int) -> List[D
 
 
 # ----------------------------------------------------------------- OCR -> text PDF
-def download_ocr(out: Path) -> Path:
+def extract_ocr_for(chosen: List[Dict[str, str]], out: Path) -> Path:
+    """Download ocr.tar.gz (66MB) and extract ONLY the sampled docs' OCR (not all 3,276 docs)."""
     from huggingface_hub import hf_hub_download
 
     dest = out / "ocr_extracted"
-    if (dest / ".done").exists():
+    needed = {c["doc_path"].replace("docs/", "ocr_text/") for c in chosen}
+    if all((dest / n).exists() for n in needed):
         return dest
     print("[dbench] downloading ocr.tar.gz (~66MB) ...")
     tar = hf_hub_download(repo_id=HF_ID, filename="ocr.tar.gz", repo_type="dataset")
     dest.mkdir(parents=True, exist_ok=True)
-    print("[dbench] extracting ...")
+    print(f"[dbench] extracting OCR for only {len(needed)} sampled docs ...")
     with tarfile.open(tar, "r:gz") as tf:
-        tf.extractall(dest)
-    (dest / ".done").write_text("ok")
+        for m in tf:
+            if "/".join(m.name.split("/")[:3]) in needed:
+                tf.extract(m, dest)
     return dest
+
+
+def build_searchable_pdf(images_dir: Path, ocr_base: Path, out_pdf: Path) -> int:
+    """Real page image (visible) + invisible OCR text layer underneath -> looks like the original
+    document AND is text-extractable by Synapse (PyMuPDF)."""
+    from PIL import Image
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+
+    def idx(p: Path) -> int:
+        try:
+            return int(os.path.splitext(p.name)[0])
+        except Exception:
+            return 1_000_000
+
+    img_by_idx = {idx(p): p for p in images_dir.iterdir()
+                  if p.suffix.lower() in (".jpg", ".jpeg", ".png")}
+    ocr_pages = read_pages(ocr_base)
+    all_idx = sorted(set(img_by_idx) | set(ocr_pages))
+    if not all_idx:
+        return 0
+    c = canvas.Canvas(str(out_pdf))
+    for i in all_idx:
+        if i in img_by_idx:
+            im = Image.open(img_by_idx[i])
+            w, h = im.size
+            c.setPageSize((w, h))
+            c.drawImage(ImageReader(img_by_idx[i]), 0, 0, width=w, height=h)
+        else:
+            w, h = 595, 842  # A4 fallback for a page with OCR but no image
+            c.setPageSize((w, h))
+        text = "\n".join(t.strip() for t in ocr_pages.get(i, []) if t.strip())
+        if text:
+            t = c.beginText(10, h - 12)
+            t.setTextRenderMode(3)               # 3 = invisible (extractable, not shown)
+            t.setFont("Helvetica", 8)
+            for line in _san(text).split("\n"):
+                t.textLine(line[:500])
+            c.drawText(t)
+        c.showPage()
+    c.save()
+    return len(all_idx)
 
 
 def read_pages(ocr_base: Path) -> Dict[int, List[str]]:
@@ -264,8 +309,9 @@ def main() -> None:
     ap.add_argument("--out", default="./double_bench_demo")
     ap.add_argument("--docs", type=int, default=100)
     ap.add_argument("--seed", type=int, default=17)
-    ap.add_argument("--source", choices=["ocr", "images"], default="ocr",
-                    help="ocr = digital text PDFs (Synapse-readable); images = ORIGINAL page-image PDFs")
+    ap.add_argument("--source", choices=["ocr", "images", "searchable"], default="ocr",
+                    help="ocr = digital text PDFs (Synapse-readable); images = ORIGINAL page-image PDFs; "
+                         "searchable = original images + invisible OCR layer (looks original AND works)")
     args = ap.parse_args()
     out = Path(args.out)
     pdfs = out / "pdfs"
@@ -275,20 +321,31 @@ def main() -> None:
     chosen = sample_docs(queries, args.docs, args.seed)
     built = 0
 
-    if args.source == "images":
+    if args.source in ("images", "searchable"):
         images_root = out / "images"
         stream_extract_images(chosen, images_root)
-        for c in chosen:
-            idir = images_root / _safe_id(c["doc_path"])
+    if args.source in ("ocr", "searchable"):
+        ocr_root = extract_ocr_for(chosen, out)
+
+    for c in chosen:
+        safe = _safe_id(c["doc_path"])
+        fname = f"{c['doc_type']}__{safe}.pdf"
+        if args.source == "images":
+            idir = images_root / safe
             if not idir.exists() or not any(idir.iterdir()):
                 print(f"  ! no images for {c['doc_path']} — skipped")
                 continue
-            fname = f"{c['doc_type']}__{_safe_id(c['doc_path'])}.pdf"
             if build_image_pdf(idir, pdfs / fname):
                 built += 1
-    else:
-        ocr_root = download_ocr(out)
-        for c in chosen:
+        elif args.source == "searchable":
+            idir = images_root / safe
+            ocr_base = ocr_root / c["doc_path"].replace("docs/", "ocr_text/")
+            if not idir.exists():
+                print(f"  ! no images for {c['doc_path']} — skipped")
+                continue
+            if build_searchable_pdf(idir, ocr_base, pdfs / fname):
+                built += 1
+        else:  # ocr text PDFs
             ocr_base = ocr_root / c["doc_path"].replace("docs/", "ocr_text/")
             if not ocr_base.exists():
                 print(f"  ! OCR missing for {c['doc_path']} — skipped")
@@ -296,15 +353,16 @@ def main() -> None:
             pages = read_pages(ocr_base)
             if not pages:
                 continue
-            fname = f"{c['doc_type']}__{_safe_id(c['doc_path'])}.pdf"
-            build_pdf(pages, _safe_id(c["doc_path"]), pdfs / fname)
+            build_pdf(pages, safe, pdfs / fname)
             built += 1
 
     write_excel(queries, chosen, out / "queries.xlsx")
-    print(f"\nDONE: {built} {'ORIGINAL image' if args.source=='images' else 'text'} PDFs in {pdfs}  +  {out/'queries.xlsx'}")
+    kind = {"images": "ORIGINAL image", "searchable": "searchable (image+OCR)", "ocr": "text"}[args.source]
+    print(f"\nDONE: {built} {kind} PDFs in {pdfs}  +  {out/'queries.xlsx'}")
     if args.source == "images":
-        print("NOTE: these are image-only PDFs (no text layer) — Synapse can't extract text from them yet,")
-        print("      so ingesting them will fail until we add scanned-page transcription. They're the true originals.")
+        print("NOTE: image-only PDFs (no text layer) — Synapse can't read them yet; these are reference originals.")
+    elif args.source == "searchable":
+        print("These look like the originals AND Synapse can read the OCR layer -> upload pdfs/ to Drive and process.")
 
 
 if __name__ == "__main__":
