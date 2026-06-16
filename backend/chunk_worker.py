@@ -107,7 +107,8 @@ def _sb_execute(query, context: str = "", max_attempts: int | None = None):
         raise last_exc
 
 
-_PIPELINE_ABORT_STATUSES = {"canceled", "failed"}
+_PIPELINE_ABORT_STATUSES = {"canceled"}  # abort only on USER cancel — a sibling batch's
+# failure must NOT stop other running workers (they may be processing fine).
 
 
 def _get_library_pipeline_status(library_id: str) -> str | None:
