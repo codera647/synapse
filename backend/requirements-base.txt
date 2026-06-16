@@ -30,6 +30,7 @@ openpyxl>=3.1               # .xlsx parsing (csv/code/text use the stdlib)
 vl-convert-python>=1.6      # Vega-Lite spec -> PNG, no browser (lazy-imported in agent_specs)
 pandas>=2.0                 # tabular re-parse for charting (agent_data; csv stdlib fallback exists)
 python-multipart>=0.0.9     # required by FastAPI for /agent/upload (multipart file uploads)
+markdown>=3.5               # markdown -> HTML for the Docs/PDF action (PDF via PyMuPDF Story)
 
 # --- OCR (CPU) ---
 pytesseract>=0.3.10          # requires the system `tesseract-ocr` binary (apt install)

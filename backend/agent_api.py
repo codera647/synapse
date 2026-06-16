@@ -300,11 +300,108 @@ class AgentRunRequest(BaseModel):
     library_ids: List[str] = Field(default_factory=list)
     upload_ids: List[str] = Field(default_factory=list)
     message: str = ""
+    action: str = "visuals"  # visuals | docs | pdf
     visual_types: List[str] = Field(default_factory=list)
     thinking_mode: Optional[str] = None
     history: List[Dict[str, str]] = Field(default_factory=list)
     client_request_id: Optional[str] = None
     run_id: Optional[str] = None
+
+
+def _gather_doc_context(org_id: str, library_ids: List[str], upload_ids: List[str], query: str):
+    """Assemble source content for a document: parsed uploads + retrieved library passages."""
+    parts: List[str] = []
+    sources_meta: List[Dict[str, Any]] = []
+    summary_lines: List[str] = []
+
+    for uid in upload_ids or []:
+        row = adata.fetch_upload_row(uid, org_id)
+        if not row:
+            continue
+        name = row.get("filename") or uid
+        try:
+            if row.get("kind") == "structured":
+                tab = adata.load_structured(org_id, "upload", uid)
+                if tab:
+                    parts.append(f"FILE {name} (table): columns={tab['columns']}; sample={tab['sample_rows'][:10]}")
+            else:
+                import document_parsers
+                raw = adata.fetch_r2_bytes(row["storage_key"])
+                ir = document_parsers.parse_to_ir(row.get("mime_type"), name, raw)
+                parts.append(f"FILE {name}:\n{_ir_to_text(ir, 6000)}")
+            summary_lines.append(f"- {name} (uploaded)")
+            sources_meta.append({"name": name, "source_ref": uid})
+        except Exception as exc:
+            print(f"[agent] doc upload context failed: {exc}")
+
+    if library_ids:
+        try:
+            qv = embed_query(query)
+            rows = hybrid_retrieve(org_id, library_ids, query, qv, top_k=int(os.getenv("AGENT_DOC_TOPK", "24")))
+            meta = hydrate_doc_titles([r.get("doc_id") for r in rows]) if rows else {}
+            seen = set()
+            for r in rows:
+                title = (meta.get(r.get("doc_id")) or {}).get("doc_title", "doc")
+                parts.append(f"[{title} p{r.get('page_start')}] {r.get('text', '')}")
+                if r.get("doc_id") not in seen:
+                    seen.add(r.get("doc_id"))
+                    summary_lines.append(f"- {title}")
+                    sources_meta.append({"doc_id": r.get("doc_id"), "doc_title": title})
+        except Exception as exc:
+            print(f"[agent] doc retrieval failed: {exc}")
+
+    return ("\n\n".join(parts))[:24000], "\n".join(summary_lines), sources_meta
+
+
+def _run_document_impl(req: "AgentRunRequest", run_id: str, rid: Optional[str], org_id: str, mode: str) -> Dict[str, Any]:
+    want_pdf = req.action == "pdf"
+    _set_progress(rid, "Reading your sources")
+    context, sources_summary, sources_meta = _gather_doc_context(org_id, req.library_ids, req.upload_ids, req.message)
+
+    _set_progress(rid, "Writing the document")
+    doc = aa.write_document(req.message, context, sources_summary, mode=mode)
+    title = doc.get("title") or "Document"
+    markdown = doc.get("markdown") or ""
+
+    artifact_id = str(uuid.uuid4())
+    art: Dict[str, Any] = {
+        "artifact_id": artifact_id, "kind": "pdf" if want_pdf else "document",
+        "format": "pdf" if want_pdf else "document", "title": title,
+        "markdown_text": markdown, "file_key": None, "render_status": "ok",
+        "data_sources": sources_meta,
+    }
+    if want_pdf and markdown.strip():
+        _set_progress(rid, "Rendering PDF")
+        try:
+            import agent_docs
+            pdf_bytes = agent_docs.render_markdown_pdf(title, markdown)
+            if pdf_bytes:
+                file_key = f"agents/{run_id}/{artifact_id}.pdf"
+                adata.put_r2_bytes(file_key, pdf_bytes, "application/pdf")
+                art["file_key"] = file_key
+            else:
+                art["render_status"] = "render_failed"
+        except Exception as exc:
+            print(f"[agent] pdf render failed: {exc}")
+            art["render_status"] = "render_failed"
+
+    narrative = f"I've drafted **{title}** from your sources. You can read it below" + (
+        " or download the PDF." if art.get("file_key") else "."
+    )
+    msg_id = _insert_message(run_id, org_id, "assistant", narrative)
+    try:
+        supabase.table("agent_artifacts").insert({
+            "id": artifact_id, "run_id": run_id, "message_id": msg_id, "organization_id": org_id,
+            "kind": art["kind"], "format": art["format"], "title": title,
+            "markdown_text": markdown, "file_key": art.get("file_key"),
+            "data_sources": sources_meta, "render_status": art["render_status"],
+        }).execute()
+    except Exception as exc:
+        print(f"[agent] failed to persist document artifact: {exc}")
+    _set_run_status(run_id, org_id, "done")
+
+    return {"status": "done", "run_id": run_id, "message_id": msg_id, "narrative": narrative,
+            "assumptions": [], "recommendations": [], "artifacts": [art], "client_request_id": rid}
 
 
 def _agent_run_impl(req: AgentRunRequest) -> Dict[str, Any]:
@@ -318,6 +415,10 @@ def _agent_run_impl(req: AgentRunRequest) -> Dict[str, Any]:
     run_id = _ensure_run(req.run_id, org_id, req.created_by_user_id, req.library_ids, req.message)
     if not req.run_id:
         _insert_message(run_id, org_id, "user", req.message, created_by=req.created_by_user_id)
+
+    # Docs / PDF action -> document-writing path.
+    if req.action in ("docs", "pdf"):
+        return _run_document_impl(req, run_id, rid, org_id, mode)
 
     _set_progress(rid, "Reviewing your data sources")
     sources_summary = _build_sources_summary(org_id, req.library_ids, req.upload_ids)
@@ -506,6 +607,10 @@ def agent_artifact_file(key: str = Query(..., description="R2 key under agents/"
         media = "image/png"
     elif k.endswith(".json"):
         media = "application/json"
-    elif "image" not in media and "json" not in media:
+    elif k.endswith(".pdf"):
+        media = "application/pdf"
+    elif k.endswith(".md"):
+        media = "text/markdown"
+    elif not media:
         media = "application/octet-stream"
     return StreamingResponse(_iter(), media_type=media, headers={"Cache-Control": "private, max-age=600"})

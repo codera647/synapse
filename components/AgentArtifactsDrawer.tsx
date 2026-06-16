@@ -32,10 +32,12 @@ export default function AgentArtifactsDrawer({
     let alive = true;
     setLoading(true);
     (async () => {
+      const formats = mode === "visuals" ? ["vega_lite", "mermaid"] : ["document", "pdf"];
       const { data } = await supabase
         .from("agent_artifacts")
-        .select("id, kind, format, title, alt_text, spec_key, png_key, mermaid_text, render_status, created_at")
+        .select("id, kind, format, title, alt_text, spec_key, png_key, mermaid_text, markdown_text, file_key, render_status, created_at")
         .eq("organization_id", organization.id)
+        .in("format", formats)
         .order("created_at", { ascending: false })
         .limit(200);
       if (!alive) return;
@@ -43,12 +45,14 @@ export default function AgentArtifactsDrawer({
         ((data as Array<Record<string, unknown>>) || []).map((a) => ({
           artifact_id: String(a.id),
           kind: (a.kind as string | null) ?? null,
-          format: (a.format as "vega_lite" | "mermaid") ?? "vega_lite",
+          format: (a.format as AgentArtifactData["format"]) ?? "vega_lite",
           title: (a.title as string | null) ?? null,
           alt_text: (a.alt_text as string | null) ?? null,
           spec_key: (a.spec_key as string | null) ?? null,
           png_key: (a.png_key as string | null) ?? null,
           mermaid_text: (a.mermaid_text as string | null) ?? null,
+          markdown_text: (a.markdown_text as string | null) ?? null,
+          file_key: (a.file_key as string | null) ?? null,
           render_status: (a.render_status as string | null) ?? "ok",
         })),
       );
@@ -90,19 +94,7 @@ export default function AgentArtifactsDrawer({
           </div>
 
           <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
-            {mode === "docs" ? (
-              <div className="grid h-full place-items-center text-center">
-                <div className="max-w-xs">
-                  <span className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-white/5">
-                    <FiFileText className="h-6 w-6 text-white/50" />
-                  </span>
-                  <div className="text-sm font-medium text-white/80">No documents yet</div>
-                  <p className="mt-1 text-xs text-white/45">
-                    Document &amp; PDF generation is coming in a later phase. Anything the agent produces will appear here.
-                  </p>
-                </div>
-              </div>
-            ) : loading ? (
+            {loading ? (
               <div className="space-y-3">
                 {[0, 1, 2].map((i) => (
                   <div key={i} className="h-40 animate-pulse rounded-2xl bg-white/5" />
@@ -112,10 +104,16 @@ export default function AgentArtifactsDrawer({
               <div className="grid h-full place-items-center text-center">
                 <div className="max-w-xs">
                   <span className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-white/5">
-                    <FiImage className="h-6 w-6 text-white/50" />
+                    {mode === "visuals" ? <FiImage className="h-6 w-6 text-white/50" /> : <FiFileText className="h-6 w-6 text-white/50" />}
                   </span>
-                  <div className="text-sm font-medium text-white/80">No visuals yet</div>
-                  <p className="mt-1 text-xs text-white/45">Charts and diagrams you create with the agent show up here.</p>
+                  <div className="text-sm font-medium text-white/80">
+                    {mode === "visuals" ? "No visuals yet" : "No documents yet"}
+                  </div>
+                  <p className="mt-1 text-xs text-white/45">
+                    {mode === "visuals"
+                      ? "Charts and diagrams you create with the agent show up here."
+                      : "Documents and PDFs you generate with the agent show up here."}
+                  </p>
                 </div>
               </div>
             ) : (

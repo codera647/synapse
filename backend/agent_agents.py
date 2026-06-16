@@ -172,6 +172,35 @@ _NARRATE_SYSTEM = (
 )
 
 
+# ── WRITE DOCUMENT (Docs / PDF action) ───────────────────────────────────────────────────────
+_DOC_SYSTEM = (
+    "You are a report-writing agent in Synapse. Using ONLY the provided source content (documents in "
+    "the user's libraries + any attached files), write a well-structured, professional document that "
+    "fulfils the user's request. Return STRICT JSON:\n"
+    '{ "title": string, "markdown": string }\n\n'
+    "RULES:\n"
+    "- Write in GitHub-flavored Markdown: a top structure of clear headings (##, ###), concise prose, "
+    "bullet lists, and Markdown TABLES where data is comparative or tabular.\n"
+    "- Ground every factual claim in the provided sources; do NOT invent facts, numbers, or sources. "
+    "If the sources don't cover something the user asked for, say so briefly.\n"
+    "- Where useful, attribute facts inline like: (Source: <document title>).\n"
+    "- Open with a short summary/abstract, then the body, then a brief conclusion. Keep it focused and "
+    "readable — no filler. Do NOT include the title as an H1 (it is added separately)."
+)
+
+
+def write_document(query: str, context: str, sources_summary: str, *, mode: str = "high") -> Dict[str, Any]:
+    user = (
+        f"USER REQUEST:\n{query}\n\n"
+        f"AVAILABLE SOURCES:\n{sources_summary or '(see content below)'}\n\n"
+        f"SOURCE CONTENT (use only this):\n{context[:22000]}"
+    )
+    out = agent_complete_json(_DOC_SYSTEM, user, mode=mode, max_tokens=8000) or {}
+    title = str(out.get("title") or (query or "Document").strip()[:80])
+    markdown = str(out.get("markdown") or "")
+    return {"title": title, "markdown": markdown}
+
+
 def narrate(query: str, artifacts_summary: str, assumptions: List[str], recommendations: List[str], *, mode: str = "medium") -> str:
     user = (
         f"USER REQUEST: {query}\n\n"

@@ -49,6 +49,7 @@ export default function AgentPanel({
   const [selectedLibs, setSelectedLibs] = useState<string[]>([]);
   const [libMenuOpen, setLibMenuOpen] = useState(false);
   const [visualTypes, setVisualTypes] = useState<Set<string>>(new Set(["bar", "line"]));
+  const [action, setAction] = useState<"visuals" | "docs" | "pdf">("visuals");
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<AgentMsg[]>([]);
@@ -78,12 +79,14 @@ export default function AgentPanel({
   const mapArtifactRow = (a: Record<string, unknown>): AgentArtifactData => ({
     artifact_id: String(a.id),
     kind: (a.kind as string | null) ?? null,
-    format: (a.format as "vega_lite" | "mermaid") ?? "vega_lite",
+    format: (a.format as AgentArtifactData["format"]) ?? "vega_lite",
     title: (a.title as string | null) ?? null,
     alt_text: (a.alt_text as string | null) ?? null,
     spec_key: (a.spec_key as string | null) ?? null,
     png_key: (a.png_key as string | null) ?? null,
     mermaid_text: (a.mermaid_text as string | null) ?? null,
+    markdown_text: (a.markdown_text as string | null) ?? null,
+    file_key: (a.file_key as string | null) ?? null,
     render_status: (a.render_status as string | null) ?? "ok",
   });
 
@@ -117,7 +120,7 @@ export default function AgentPanel({
           .order("created_at", { ascending: true }),
         supabase
           .from("agent_artifacts")
-          .select("id, message_id, kind, format, title, alt_text, spec_key, png_key, mermaid_text, render_status, created_at")
+          .select("id, message_id, kind, format, title, alt_text, spec_key, png_key, mermaid_text, markdown_text, file_key, render_status, created_at")
           .eq("run_id", id)
           .eq("organization_id", organization.id)
           .order("created_at", { ascending: true }),
@@ -241,6 +244,7 @@ export default function AgentPanel({
           library_ids: selectedLibs,
           upload_ids: uploads.map((u) => u.upload_id),
           message: text,
+          action,
           visual_types: Array.from(visualTypes),
           thinking_mode: "high",
           history,
@@ -330,17 +334,24 @@ export default function AgentPanel({
           ) : null}
         </div>
 
-        {/* Action chips */}
+        {/* Action selector */}
         <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 p-1">
-          <span className="inline-flex items-center gap-1.5 rounded-lg btn-grad px-2.5 py-1.5 text-xs font-medium text-white">
-            <FiBarChart2 className="h-3.5 w-3.5" /> Visuals
-          </span>
-          <span className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-white/30" title="Coming soon">
-            <FiFileText className="h-3.5 w-3.5" /> Docs
-          </span>
-          <span className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-white/30" title="Coming soon">
-            <FiFile className="h-3.5 w-3.5" /> PDF
-          </span>
+          {([
+            { key: "visuals", label: "Visuals", icon: FiBarChart2 },
+            { key: "docs", label: "Docs", icon: FiFileText },
+            { key: "pdf", label: "PDF", icon: FiFile },
+          ] as const).map((a) => (
+            <button
+              key={a.key}
+              type="button"
+              onClick={() => setAction(a.key)}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                action === a.key ? "btn-grad text-white" : "text-white/55 hover:text-white"
+              }`}
+            >
+              <a.icon className="h-3.5 w-3.5" /> {a.label}
+            </button>
+          ))}
         </div>
 
         <div className="ml-auto flex items-center gap-1.5">
@@ -417,8 +428,8 @@ export default function AgentPanel({
         onClose={() => setDrawerMode(null)}
       />
 
-      {/* Visual type multiselect */}
-      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+      {/* Visual type multiselect (only for the Visuals action) */}
+      <div className={`mb-2 flex flex-wrap items-center gap-1.5 ${action === "visuals" ? "" : "hidden"}`}>
         <span className="text-[10px] uppercase tracking-wide text-white/35">Visual types</span>
         {VISUAL_TYPES.map((t) => (
           <button
@@ -602,13 +613,29 @@ function MessageRow({ m, onAnswer }: { m: AgentMsg; onAnswer: (ans: string) => v
       <div className="mt-1 text-sm text-white/85">
         <ChatMarkdown content={m.content} />
       </div>
-      {(m.artifacts || []).length > 0 ? (
-        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {(m.artifacts || []).map((a) => (
-            <AgentArtifact key={a.artifact_id} artifact={a} />
-          ))}
-        </div>
-      ) : null}
+      {(() => {
+        const arts = m.artifacts || [];
+        const docs = arts.filter((a) => a.format === "document" || a.format === "pdf");
+        const vis = arts.filter((a) => a.format === "vega_lite" || a.format === "mermaid");
+        return (
+          <>
+            {docs.length > 0 ? (
+              <div className="mt-2 space-y-3">
+                {docs.map((a) => (
+                  <AgentArtifact key={a.artifact_id} artifact={a} />
+                ))}
+              </div>
+            ) : null}
+            {vis.length > 0 ? (
+              <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {vis.map((a) => (
+                  <AgentArtifact key={a.artifact_id} artifact={a} />
+                ))}
+              </div>
+            ) : null}
+          </>
+        );
+      })()}
     </div>
   );
 }
