@@ -636,7 +636,11 @@ def run_embedding_stage_job(stage_job: dict):
                     context="batch_stage_jobs.update(embedding.progress)",
                 )
 
-        # If we produced no embeddings for the entire batch, mark failed so clustering doesn't run on empty state.
+        # No embeddings for the whole batch (its docs produced no chunks). Mark THIS batch failed
+        # (resumable) and stop — but do NOT fail the library or cancel sibling batches. The other
+        # batches finish normally; the pipeline finalizer marks the library failed-but-retryable only
+        # once everything has settled. (A single doc with a bad/empty transcription no longer sinks
+        # the whole run.)
         if inserted_total <= 0:
             msg = "No embeddings were produced for this batch."
             if missing_chunks_docs:
@@ -647,18 +651,12 @@ def run_embedding_stage_job(stage_job: dict):
                 ).eq("id", job_id),
                 context="batch_stage_jobs.update(embedding.failed.empty)",
             )
-            _sb_execute(
-                supabase.table("libraries").update(
-                    {
-                        "pipeline_status": "failed",
-                        "pipeline_stage": "embedding",
-                        "pipeline_error": msg,
-                        "status": "error",
-                    }
-                ).eq("id", library_id),
-                context="libraries.update(embedding.failed.empty)",
-            )
-            raise RuntimeError(msg)
+            print(f"[embed] batch {job_id} produced 0 embeddings — marked failed; siblings continue. {msg}")
+            try:
+                _maybe_finalize_pipeline(library_id)
+            except Exception:
+                pass
+            return
 
         # Cancel guard: if the user cancelled while this batch ran, stop here. Mark THIS job
         # canceled (resume re-queues it) and do NOT mark done / enqueue the next stage / flip the
@@ -706,11 +704,14 @@ def run_embedding_stage_job(stage_job: dict):
             ).eq("id", library_id),
             context="libraries.update(embedding.failed)",
         )
-        _cancel_queued_stage_jobs_for_library(
-            library_id,
-            reason=f"Canceled due to failure in embedding: {str(exc)}",
-            exclude_job_id=job_id,
-        )
+        # One batch failing should NOT cancel sibling batches by default — they may be fine. Opt in
+        # with PIPELINE_CASCADE_CANCEL=1 for fail-fast behavior.
+        if os.getenv("PIPELINE_CASCADE_CANCEL", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            _cancel_queued_stage_jobs_for_library(
+                library_id,
+                reason=f"Canceled due to failure in embedding: {str(exc)}",
+                exclude_job_id=job_id,
+            )
         raise
 
 

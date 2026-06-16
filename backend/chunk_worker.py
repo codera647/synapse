@@ -863,11 +863,12 @@ def run_chunk_stage_job(stage_job):
             ).eq("id", library_id),
             context="libraries.update(chunking.failed)",
         )
-        _cancel_queued_stage_jobs_for_library(
-            library_id,
-            reason=f"Canceled due to failure in chunking: {str(exc)}",
-            exclude_job_id=job_id,
-        )
+        if os.getenv("PIPELINE_CASCADE_CANCEL", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            _cancel_queued_stage_jobs_for_library(
+                library_id,
+                reason=f"Canceled due to failure in chunking: {str(exc)}",
+                exclude_job_id=job_id,
+            )
         raise
 
 

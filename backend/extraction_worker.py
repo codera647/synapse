@@ -790,11 +790,12 @@ def run_text_extraction_stage_job(stage_job):
             ).eq("id", library_id),
             context="libraries.update(text_extraction.failed)",
         )
-        _cancel_queued_stage_jobs_for_library(
-            library_id,
-            reason=f"Canceled due to failure in text_extraction: {str(exc)}",
-            exclude_job_id=job_id,
-        )
+        if os.getenv("PIPELINE_CASCADE_CANCEL", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            _cancel_queued_stage_jobs_for_library(
+                library_id,
+                reason=f"Canceled due to failure in text_extraction: {str(exc)}",
+                exclude_job_id=job_id,
+            )
         raise
 
 
