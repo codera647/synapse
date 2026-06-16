@@ -480,6 +480,25 @@ def _compute_links(page_blocks):
     return links
 
 
+def _vlm_scanned_enabled() -> bool:
+    """Option B: transcribe scanned/image pages with the VLM. On unless disabled, and only if the
+    VLM (OpenRouter Qwen2.5-VL) is configured."""
+    if str(os.getenv("EXTRACT_SCANNED_VLM", "1")).strip().lower() in {"0", "false", "no", "off"}:
+        return False
+    try:
+        import vlm_client
+        return vlm_client.is_configured()
+    except Exception:
+        return False
+
+
+def _render_page_image(page, dpi: int = 150):
+    import io
+    from PIL import Image
+    pix = page.get_pixmap(dpi=dpi)
+    return Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+
+
 def run_text_extraction_stage_job(stage_job):
     library_id = stage_job["library_id"]
     org_id = stage_job["organization_id"]
@@ -646,6 +665,34 @@ def run_text_extraction_stage_job(stage_job):
                     elif btype in {"figure", "table"}:
                         rec["needs_caption"] = True
                     out_blocks.append(rec)
+
+                # Option B — scanned/image page (no extractable text): full-page VLM transcription so
+                # the body text + tables + figure data become chunkable. Gated by per-page text density,
+                # so digital pages keep their native text and pay nothing.
+                page_chars = sum(len((b.get("text") or "").strip()) for b in out_blocks)
+                if page_chars < min_chars and _vlm_scanned_enabled():
+                    try:
+                        import vlm_client
+
+                        img = _render_page_image(page, int(os.getenv("EXTRACT_VLM_DPI", "150")))
+                        vtext = (vlm_client.transcribe_page(img) or "").strip()
+                        if vtext:
+                            out_blocks.append({
+                                "block_id": f"p{page_index}_vlm",
+                                "page": page_index,
+                                "type": "text",
+                                "kind": "text",
+                                "score": 1.0,
+                                "bbox_img": None,
+                                "bbox_pdf": None,
+                                "text": vtext,
+                                "char_count": len(vtext),
+                                "needs_ocr": False,
+                                "source": "vlm_page_transcription",
+                            })
+                            print(f"[extract] doc={doc_id} VLM-transcribed scanned page {page_index} ({len(vtext)} chars)")
+                    except Exception as exc:
+                        print(f"[extract] doc={doc_id} VLM transcription failed page {page_index}: {exc}")
 
                 out_pages.append({"page": page_index, "blocks": out_blocks})
                 all_links.extend(_compute_links(out_blocks))

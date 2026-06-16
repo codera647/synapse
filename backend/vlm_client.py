@@ -156,17 +156,34 @@ _OCR_PROMPT = (
     "plain text only, with no commentary. If there is no text, output nothing."
 )
 
+# Full-page prompt for scanned/image documents: capture EVERYTHING (body text + tables + figures)
+# so no answer-relevant information is lost when this becomes the page's chunkable text.
+_PAGE_PROMPT = (
+    "You are transcribing ONE page of a document (an image) for a search/retrieval system. "
+    "Reproduce ALL information on the page so nothing is lost. Rules:\n"
+    "1. Transcribe ALL text VERBATIM in natural reading order. For multi-column layouts, read the "
+    "left column top-to-bottom first, then the next column.\n"
+    "2. Render EVERY table as GitHub-flavored Markdown with the real cell values — keep all rows and "
+    "columns; do not abbreviate.\n"
+    "3. For EVERY figure, chart, graph, diagram or image, add a line beginning with '[FIGURE] ' that "
+    "describes what it shows AND extracts its data: title, axis labels, legend, series names, numeric "
+    "values, and any text inside it.\n"
+    "4. Do NOT summarize, omit, translate, or invent anything. Output only the page content, no "
+    "commentary. If the page is blank, output nothing."
+)
+
 
 def transcribe_page(img) -> Optional[str]:
-    """Full-page OCR/transcription via the VLM — handles scanned pages and multi-column order."""
+    """Full-page transcription via the VLM for scanned/image pages — captures body text, tables
+    (as Markdown), and figures (described + data extracted). Handles multi-column reading order."""
     if not is_configured() or img is None:
         return None
     try:
         content = [
-            {"type": "text", "text": _OCR_PROMPT},
+            {"type": "text", "text": _PAGE_PROMPT},
             {"type": "image_url", "image_url": {"url": _img_to_data_url(img)}},
         ]
-        return _chat([{"role": "user", "content": content}], max_tokens=int(os.getenv("CAPTION_VLM_OCR_MAX_TOKENS", "1800")))
+        return _chat([{"role": "user", "content": content}], max_tokens=int(os.getenv("CAPTION_VLM_PAGE_MAX_TOKENS", "3000")))
     except Exception:
         return None
 
