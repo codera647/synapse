@@ -14,7 +14,6 @@ import LibraryDrawer from "@/components/LibraryDrawer";
 import ChatWorkspace from "@/components/ChatWorkspace";
 import TeamWorkspace from "@/components/TeamWorkspace";
 import SettingsModal, { type Personalization } from "@/components/SettingsModal";
-import PipelineStepper from "@/components/PipelineStepper";
 
 type Library = {
     id: string;
@@ -1257,12 +1256,14 @@ function DashboardPageInner() {
                                             </span>
                                         </span>
                                         <div className="mt-2 flex items-center gap-3">
-	                                            {getStatusBadge(getPipelineStatus(lib))}
-	                                            <div className="flex items-center gap-2">
-	                                                <div className="h-2 w-48 rounded-full bg-white/[0.07] overflow-hidden ring-1 ring-inset ring-white/[0.06]">
-	                                                    <div
-	                                                        className={`h-full rounded-full transition-all duration-500 ${getPipelineStatus(lib) === "completed"
-	                                                                ? "bg-emerald-500"
+                                            {!["running", "queued", "processing"].includes(getPipelineStatus(lib))
+                                                ? getStatusBadge(getPipelineStatus(lib))
+                                                : null}
+                                            <div className="flex items-center gap-2">
+                                                <div className="h-2 w-48 rounded-full bg-white/[0.07] overflow-hidden ring-1 ring-inset ring-white/[0.06]">
+                                                    <div
+                                                        className={`h-full rounded-full transition-all duration-500 ${getPipelineStatus(lib) === "completed"
+                                                                ? "bg-emerald-500"
                                                                 : getPipelineStatus(lib) === "failed"
                                                                     ? "bg-red-500"
                                                                     : "bg-gradient-to-r from-violet-400 to-fuchsia-400 shimmer"
@@ -1273,19 +1274,11 @@ function DashboardPageInner() {
                                                         }}
                                                     />
                                                 </div>
+                                                <span className="text-[11px] font-medium tabular-nums text-white/60">
+                                                    {Math.round(getProgressPercent(lib))}%
+                                                </span>
                                             </div>
                                         </div>
-                                        {["running", "queued", "processing"].includes(getPipelineStatus(lib)) ? (
-                                            <div className="mt-2 w-60 max-w-full">
-                                                <PipelineStepper supabase={supabase} libraryId={lib.id} active compact />
-                                            </div>
-                                        ) : null}
-                                        <p className="mt-2 text-[11px] text-white/40">
-                                            {["running", "queued", "processing"].includes(getPipelineStatus(lib)) && lib.pipeline_stage
-                                                ? `${lib.pipeline_stage} · `
-                                                : ""}
-                                            {Math.round(getProgressPercent(lib))}% complete
-                                        </p>
                                     </div>
 
                                     <div className="flex items-center h-full">
