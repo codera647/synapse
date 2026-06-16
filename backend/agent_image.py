@@ -21,6 +21,22 @@ def image_model() -> str:
     return (os.getenv("AGENT_IMAGE_MODEL") or "gpt-image-1").strip() or "gpt-image-1"
 
 
+# Default style nudge so diagrams/charts come out legible (white background, high contrast) rather
+# than a dark theme. Override or clear with AGENT_IMAGE_PROMPT_SUFFIX (set to "" to disable).
+_DEFAULT_STYLE = (
+    " — clean, high-contrast illustration on a plain WHITE background, crisp and legible labels, "
+    "no dark/black background"
+)
+
+
+def _styled(prompt: str) -> str:
+    suffix = os.getenv("AGENT_IMAGE_PROMPT_SUFFIX", _DEFAULT_STYLE)
+    p = (prompt or "").strip()
+    if suffix and suffix.strip().lower() not in p.lower():
+        p = f"{p}{suffix}"
+    return p
+
+
 def generate_image(prompt: str, *, size: Optional[str] = None) -> bytes:
     from openai import OpenAI
 
@@ -35,7 +51,10 @@ def generate_image(prompt: str, *, size: Optional[str] = None) -> bytes:
     model = image_model()
     sz = (size or os.getenv("AGENT_IMAGE_SIZE", "1024x1024")).strip() or "1024x1024"
 
-    kwargs = {"model": model, "prompt": p[:4000], "size": sz, "n": 1}
+    kwargs = {"model": model, "prompt": _styled(p)[:4000], "size": sz, "n": 1}
+    # gpt-image-1 supports an explicit opaque (non-transparent) background.
+    if model.startswith("gpt-image"):
+        kwargs["background"] = os.getenv("AGENT_IMAGE_BACKGROUND", "opaque")
     # dall-e-* accepts response_format; gpt-image-1 always returns b64 and rejects the param.
     if model.startswith("dall-e"):
         kwargs["response_format"] = "b64_json"
