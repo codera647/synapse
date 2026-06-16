@@ -54,6 +54,22 @@ Outputs land in `backend/eval/runs/<run_id>/`:
 `sample_docs.jsonl`, `sample_queries.jsonl`, `ingest.json`, `doc_map.json`, `results.jsonl`,
 `report.json`, `report.md`.
 
+## Evaluating a MANUALLY-created library (Drive upload)
+If you built PDFs with `download_for_drive.py`, uploaded them to Google Drive, and processed them as a
+normal Synapse library, you can score that live library directly (no harness ingest):
+
+```bash
+# config: run_id: drive100, retrieval.match_level: doc
+python -m eval.bind_drive_library --config eval/config.yaml --library-name "DoubleBench"
+python -m eval.run_queries        --config eval/config.yaml --retrieval-only   # free
+python -m eval.run_queries        --config eval/config.yaml                    # paid (deep + dual judge)
+python -m eval.report             --config eval/config.yaml
+```
+`bind_drive_library` maps each document's filename (`English_0989.pdf`) back to its benchmark queries.
+Retrieval is scored at **document level** (`match_level: doc` — "did it retrieve the right document?")
+because rebuilt text-PDFs don't preserve exact benchmark page numbers. Answer accuracy (dual judge),
+RAGAS, honesty, and latency are unaffected.
+
 ## Calibration note
 DOUBLE-BENCH evidence is page-numbered; Synapse stores parser page indices. After step 3a, spot-check
 a few known-evidence queries and set `retrieval.page_offset` in the config (commonly 0 or 1) so

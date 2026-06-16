@@ -30,12 +30,29 @@ def _cited_pages(row: Dict[str, Any], offset: int) -> Set[int]:
     return pages
 
 
-def score_rows(rows: List[Dict[str, Any]], offset: int = 0) -> Dict[str, Any]:
+def _cited_docs(row: Dict[str, Any]) -> set:
+    return {str(c.get("bench_doc_id")) for c in (row.get("chat") or {}).get("citations", []) or []
+            if c.get("bench_doc_id")}
+
+
+def score_rows(rows: List[Dict[str, Any]], offset: int = 0, match_level: str = "page") -> Dict[str, Any]:
     precisions: List[float] = []
     recalls: List[float] = []
     n_with_citations = 0
     for row in rows:
         if "answer" not in (row.get("chat") or {}):
+            continue
+        if match_level == "doc":
+            # Did it cite the query's document?  (robust when page numbers aren't aligned.)
+            want = str(row.get("bench_doc_id"))
+            cited = _cited_docs(row)
+            if cited:
+                n_with_citations += 1
+                inter = 1 if want in cited else 0
+                precisions.append(inter / len(cited))
+                recalls.append(float(inter))
+            else:
+                recalls.append(0.0)
             continue
         ev = _evidence_pages(row)
         cited = _cited_pages(row, offset)

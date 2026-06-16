@@ -152,6 +152,69 @@ def read_pages(ocr_base: Path) -> Dict[int, List[str]]:
     return pages
 
 
+# ----------------------------------------------------------------- ORIGINAL images -> image PDF
+def stream_extract_images(chosen: List[Dict[str, str]], images_root: Path) -> None:
+    """Stream docs.tar.gz (23GB) and extract ONLY the sampled docs' page images. Bounded: a doc's
+    files are contiguous, so we stop once every needed doc has been passed."""
+    import gzip
+    import requests
+
+    images_root.mkdir(parents=True, exist_ok=True)
+    needed = {c["doc_path"] for c in chosen}        # "docs/English/0989"
+    remaining = set(needed)
+    url = f"https://huggingface.co/datasets/{HF_ID}/resolve/main/docs.tar.gz"
+    print("[dbench] streaming docs.tar.gz (23GB) — extracting only your 100 docs (a few GB) ...")
+    r = requests.get(url, stream=True, timeout=1800)
+    r.raise_for_status()
+    r.raw.decode_content = True
+    gz = gzip.GzipFile(fileobj=r.raw)
+    tf = tarfile.open(fileobj=gz, mode="r|")
+    seen = 0
+    current = None
+    try:
+        for m in tf:
+            seen += 1
+            if seen % 20000 == 0:
+                print(f"  ...scanned {seen} entries, {len(remaining)} docs left")
+            top = "/".join(m.name.split("/")[:3])
+            if current is not None and top != current and current in remaining:
+                remaining.discard(current)
+                if not remaining:
+                    break
+            current = top
+            if top in needed and m.isfile() and m.name.lower().endswith((".jpg", ".jpeg", ".png")):
+                d = images_root / _safe_id(top)
+                d.mkdir(parents=True, exist_ok=True)
+                f = tf.extractfile(m)
+                if f is not None:
+                    (d / os.path.basename(m.name)).write_bytes(f.read())
+    finally:
+        tf.close()
+        r.close()
+
+
+def build_image_pdf(images_dir: Path, out_pdf: Path) -> int:
+    from PIL import Image
+
+    def idx(p: Path) -> int:
+        try:
+            return int(os.path.splitext(p.name)[0])
+        except Exception:
+            return 1_000_000
+
+    imgs = sorted([p for p in images_dir.iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png")], key=idx)
+    pages = []
+    for p in imgs:
+        try:
+            pages.append(Image.open(p).convert("RGB"))
+        except Exception:
+            pass
+    if not pages:
+        return 0
+    pages[0].save(out_pdf, "PDF", save_all=True, append_images=pages[1:])
+    return len(pages)
+
+
 def build_pdf(pages: Dict[int, List[str]], title: str, out_pdf: Path) -> int:
     from fpdf import FPDF
 
@@ -186,7 +249,7 @@ def write_excel(queries: List[Dict[str, Any]], chosen: List[Dict[str, str]], out
         if not c:
             continue
         ws.append([
-            f"{_safe_id(q['doc_path'])}.pdf", q["doc_type"], q["hops"],
+            f"{c['doc_type']}__{_safe_id(q['doc_path'])}.pdf", c["doc_type"], q["hops"],
             q["question"], q["answer"], ", ".join(str(p) for p in q["evidence_pages"]),
         ])
         n += 1
@@ -201,6 +264,8 @@ def main() -> None:
     ap.add_argument("--out", default="./double_bench_demo")
     ap.add_argument("--docs", type=int, default=100)
     ap.add_argument("--seed", type=int, default=17)
+    ap.add_argument("--source", choices=["ocr", "images"], default="ocr",
+                    help="ocr = digital text PDFs (Synapse-readable); images = ORIGINAL page-image PDFs")
     args = ap.parse_args()
     out = Path(args.out)
     pdfs = out / "pdfs"
@@ -208,23 +273,38 @@ def main() -> None:
 
     queries = load_queries()
     chosen = sample_docs(queries, args.docs, args.seed)
-    ocr_root = download_ocr(out)
-
     built = 0
-    for c in chosen:
-        ocr_base = ocr_root / c["doc_path"].replace("docs/", "ocr_text/")
-        if not ocr_base.exists():
-            print(f"  ! OCR missing for {c['doc_path']} — skipped")
-            continue
-        pages = read_pages(ocr_base)
-        if not pages:
-            continue
-        safe = _safe_id(c["doc_path"])
-        build_pdf(pages, safe, pdfs / f"{safe}.pdf")
-        built += 1
+
+    if args.source == "images":
+        images_root = out / "images"
+        stream_extract_images(chosen, images_root)
+        for c in chosen:
+            idir = images_root / _safe_id(c["doc_path"])
+            if not idir.exists() or not any(idir.iterdir()):
+                print(f"  ! no images for {c['doc_path']} — skipped")
+                continue
+            fname = f"{c['doc_type']}__{_safe_id(c['doc_path'])}.pdf"
+            if build_image_pdf(idir, pdfs / fname):
+                built += 1
+    else:
+        ocr_root = download_ocr(out)
+        for c in chosen:
+            ocr_base = ocr_root / c["doc_path"].replace("docs/", "ocr_text/")
+            if not ocr_base.exists():
+                print(f"  ! OCR missing for {c['doc_path']} — skipped")
+                continue
+            pages = read_pages(ocr_base)
+            if not pages:
+                continue
+            fname = f"{c['doc_type']}__{_safe_id(c['doc_path'])}.pdf"
+            build_pdf(pages, _safe_id(c["doc_path"]), pdfs / fname)
+            built += 1
+
     write_excel(queries, chosen, out / "queries.xlsx")
-    print(f"\nDONE: {built} PDFs in {pdfs}  +  {out/'queries.xlsx'}")
-    print("Next: upload the pdfs/ folder to Google Drive -> create a Synapse library on it -> process -> ask questions.")
+    print(f"\nDONE: {built} {'ORIGINAL image' if args.source=='images' else 'text'} PDFs in {pdfs}  +  {out/'queries.xlsx'}")
+    if args.source == "images":
+        print("NOTE: these are image-only PDFs (no text layer) — Synapse can't extract text from them yet,")
+        print("      so ingesting them will fail until we add scanned-page transcription. They're the true originals.")
 
 
 if __name__ == "__main__":

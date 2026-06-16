@@ -16,11 +16,11 @@ from typing import Any, Dict, List
 from eval.metrics.retrieval import hit_at_k
 
 
-def classify(row: Dict[str, Any], k: int = 5, offset: int = 0):
+def classify(row: Dict[str, Any], k: int = 5, offset: int = 0, match_level: str = "page"):
     chat = row.get("chat") or {}
     if "answer" not in chat:
         return None  # not judged
-    hit = hit_at_k(row, k, offset)
+    hit = hit_at_k(row, k, offset, match_level)
     if hit is None:
         return None
     attempt = not bool(chat.get("abstained"))
@@ -33,11 +33,11 @@ def classify(row: Dict[str, Any], k: int = 5, offset: int = 0):
     return "miss_refuse"
 
 
-def score_rows(rows: List[Dict[str, Any]], k: int = 5, offset: int = 0) -> Dict[str, Any]:
+def score_rows(rows: List[Dict[str, Any]], k: int = 5, offset: int = 0, match_level: str = "page") -> Dict[str, Any]:
     counts = {"hit_attempt": 0, "hit_refuse": 0, "miss_attempt": 0, "miss_refuse": 0}
     total = 0
     for row in rows:
-        c = classify(row, k, offset)
+        c = classify(row, k, offset, match_level)
         if c is None:
             continue
         counts[c] += 1

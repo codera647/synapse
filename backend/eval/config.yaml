@@ -2,8 +2,8 @@
 # Secrets come from the backend env (/etc/synapse/backend.env): SUPABASE_URL,
 # SUPABASE_SERVICE_ROLE_KEY, R2_*, OPENAI_API_KEY.
 
-run_id: real50                       # fresh run dir (keeps the earlier ocr `demo` run separate)
-backend_url: http://127.0.0.1:8000   # FastAPI backend (workers must be running for ingest)
+run_id: drive100                     # the manually-created Drive library run
+backend_url: http://127.0.0.1:8000   # FastAPI backend (must be running)
 
 # ---- DOUBLE-BENCH dataset (Episoode/Double-Bench on HuggingFace) --------------------------
 # Two query configs: single-hop and multi-hop. Documents live in docs.tar.gz (23GB, page images)
@@ -29,7 +29,10 @@ sample:
 # ---- Retrieval (free; runs on ALL sampled queries) ---------------------------------------
 retrieval:
   top_k: 5                              # paper setting (hit@1/3/5 from top-5)
-  page_offset: 0                        # both Synapse + benchmark pages are 0-based; verify in calibration
+  match_level: doc                      # doc = "retrieved the right document?" (robust for the Drive
+                                         # library where rebuilt text-PDFs don't keep exact page #s).
+                                         # Use `page` only when ingested PDFs preserve benchmark pages.
+  page_offset: 0
   concurrency: 8
 
 # ---- Judged answer slice (paid; deep mode + dual judge) ----------------------------------

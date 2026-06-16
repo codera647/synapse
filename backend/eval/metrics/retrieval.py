@@ -40,12 +40,25 @@ def _evidence_sets(row: Dict[str, Any]) -> List[Set[int]]:
     return [set(int(p) for p in ev)] if ev else []
 
 
-def hit_at_k(row: Dict[str, Any], k: int, offset: int = 0) -> Optional[bool]:
-    """True/False if the query has evidence labels; None if it can't be scored."""
+def _retrieved_docs(row: Dict[str, Any], k: int) -> set:
+    return {str(r.get("bench_doc_id")) for r in (row.get("retrieve") or {}).get("results", [])[:k]}
+
+
+def hit_at_k(row: Dict[str, Any], k: int, offset: int = 0, match_level: str = "page") -> Optional[bool]:
+    """True/False if the query is scorable, else None.
+
+    match_level='page' (default) — page-level per the paper (needs aligned page numbers).
+    match_level='doc'  — did top-k include the query's document at all (robust when the ingested
+                         PDFs don't preserve exact benchmark page numbers, e.g. rebuilt text-PDFs).
+    """
+    doc_id = str(row.get("bench_doc_id"))
+    if match_level == "doc":
+        if not doc_id:
+            return None
+        return doc_id in _retrieved_docs(row, k)
     ev_sets = _evidence_sets(row)
     if not ev_sets:
         return None
-    doc_id = str(row.get("bench_doc_id"))
     retrieved = _retrieved_pages_for_doc(row, k, doc_id, offset)
     if not retrieved:
         return False
@@ -53,7 +66,7 @@ def hit_at_k(row: Dict[str, Any], k: int, offset: int = 0) -> Optional[bool]:
     return all(bool(retrieved & ev) for ev in ev_sets)
 
 
-def score_rows(rows: List[Dict[str, Any]], ks=(1, 3, 5), offset: int = 0) -> Dict[str, Any]:
+def score_rows(rows: List[Dict[str, Any]], ks=(1, 3, 5), offset: int = 0, match_level: str = "page") -> Dict[str, Any]:
     """Aggregate hit@k overall and broken down by hop-count, language, doc_type, modality."""
     def _empty():
         return {f"hit@{k}": [0, 0] for k in ks}  # [hits, total]
@@ -66,7 +79,7 @@ def score_rows(rows: List[Dict[str, Any]], ks=(1, 3, 5), offset: int = 0) -> Dic
             # still counts as a miss if it has evidence (retrieval ran but returned nothing)
             pass
         for k in ks:
-            h = hit_at_k(row, k, offset)
+            h = hit_at_k(row, k, offset, match_level)
             if h is None:
                 continue
             overall[f"hit@{k}"][1] += 1

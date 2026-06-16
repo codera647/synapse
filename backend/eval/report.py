@@ -67,7 +67,8 @@ def _md_retrieval(ret: Dict[str, Any]) -> str:
             return "—"
         return f"{v[0]:.3f} (n={v[1]})"
 
-    lines = ["### Retrieval — hit@k (page-level)", "", "| Split | hit@1 | hit@3 | hit@5 |", "|---|---|---|---|",
+    level = ret.get("_level", "page")
+    lines = [f"### Retrieval — hit@k ({level}-level)", "", "| Split | hit@1 | hit@3 | hit@5 |", "|---|---|---|---|",
              row("**Overall**", ret["overall"])]
     for label, key in [("by hops", "by_hops"), ("by language", "by_language"),
                        ("by doc type", "by_doc_type"), ("by modality", "by_modality")]:
@@ -109,21 +110,26 @@ def build(cfg) -> Dict[str, Any]:
     rows = common.read_jsonl(rd / "results.jsonl")
     if not rows:
         raise SystemExit("results.jsonl empty — run eval.run_queries first.")
-    offset = int((cfg.get("retrieval") or {}).get("page_offset", 0))
+    rcfg = cfg.get("retrieval") or {}
+    offset = int(rcfg.get("page_offset", 0))
+    match_level = str(rcfg.get("match_level", "page"))
+    top_k = int(rcfg.get("top_k", 5))
     judged = [r for r in rows if (r.get("chat") or {}).get("answer")]
     ragas_llm = (cfg.get("answer") or {}).get("ragas_llm", "gpt-4o-mini")
 
     report = {
         "run_id": cfg.get("run_id"),
+        "match_level": match_level,
         "n_queries": len(rows),
         "n_judged": len(judged),
-        "retrieval": retrieval.score_rows(rows, ks=(1, 3, 5), offset=offset),
+        "retrieval": retrieval.score_rows(rows, ks=(1, 3, 5), offset=offset, match_level=match_level),
         "answer": _answer_stats(rows),
-        "honesty": honesty.score_rows(judged, k=int((cfg.get("retrieval") or {}).get("top_k", 5)), offset=offset),
-        "citation": citation.score_rows(judged, offset=offset),
+        "honesty": honesty.score_rows(judged, k=top_k, offset=offset, match_level=match_level),
+        "citation": citation.score_rows(judged, offset=offset, match_level=match_level),
         "efficiency": efficiency.score_rows(rows),
         "ragas": ragas_suite.score_rows(judged, ragas_llm=ragas_llm),
     }
+    report["retrieval"]["_level"] = match_level
     (rd / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
 
     md = [
