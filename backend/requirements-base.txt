@@ -23,8 +23,9 @@ PyMuPDF>=1.24,<2.0           # imported as `fitz`
 pillow>=10.3
 numpy>=1.26,<3.0
 
-# --- Multi-format ingestion (Excel/code/text parsers) ---
+# --- Multi-format ingestion (Excel/Word/code/text parsers) ---
 openpyxl>=3.1               # .xlsx parsing (csv/code/text use the stdlib)
+python-docx>=1.1            # .docx parsing (paragraphs + tables); .doc binary is NOT supported
 
 # --- Agent mode (visual artifacts) ---
 vl-convert-python>=1.6      # Vega-Lite spec -> PNG, no browser (lazy-imported in agent_specs)

@@ -57,6 +57,8 @@ def parse_to_ir(mime_type: Optional[str], filename: Optional[str], file_bytes: b
             return _parse_csv(file_bytes, filename or "data.csv")
         if name.endswith((".xlsx", ".xlsm")) or "spreadsheetml" in mt or "ms-excel" in mt:
             return _parse_xlsx(file_bytes, filename or "workbook.xlsx")
+        if name.endswith(".docx") or "wordprocessingml" in mt:
+            return _parse_docx(file_bytes, filename or "document.docx")
         if any(name.endswith(e) for e in _CODE_EXTS):
             return _parse_code(file_bytes, filename or "file.txt")
         if name.endswith((".md", ".markdown")) or "markdown" in mt:
@@ -84,6 +86,41 @@ def _rows_to_blocks(header: List[str], rows: List[List[str]], sheet: str, start_
         blocks.append(_block(bi, "\n".join(lines), locator=loc, force_chunk=True))
         bi += 1
     return blocks
+
+
+def _parse_docx(file_bytes: bytes, filename: str) -> Optional[Dict[str, Any]]:
+    """Word .docx -> text IR: paragraphs (headings kept as section headings) + tables serialized as
+    text (same convention as xlsx). Needs python-docx; returns None if unavailable. .doc (old binary)
+    is NOT supported — convert to .docx or PDF."""
+    try:
+        from docx import Document  # python-docx
+    except Exception:
+        return None
+    try:
+        doc = Document(io.BytesIO(file_bytes))
+    except Exception:
+        return None
+    blocks: List[Dict[str, Any]] = []
+    bi = 0
+    for p in doc.paragraphs:
+        txt = (p.text or "").strip()
+        if not txt:
+            continue
+        style = (getattr(p.style, "name", "") or "").lower()
+        heading = txt[:80] if "heading" in style or "title" in style else None
+        blocks.append(_block(bi, txt, locator=filename, section_heading=heading))
+        bi += 1
+    for ti, table in enumerate(getattr(doc, "tables", []) or []):
+        rows = [[(c.text or "").strip() for c in row.cells] for row in table.rows]
+        rows = [r for r in rows if any(c for c in r)]
+        if not rows:
+            continue
+        lines = [" | ".join(rows[0])] + [" | ".join(r) for r in rows[1:]]
+        blocks.append(_block(bi, "\n".join(lines), locator=f"{filename} table {ti + 1}", force_chunk=True))
+        bi += 1
+    if not blocks:
+        return None
+    return {"format": "docx", "pages": [{"page": 0, "blocks": blocks}], "links": []}
 
 
 def _parse_csv(file_bytes: bytes, filename: str) -> Optional[Dict[str, Any]]:

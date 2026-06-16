@@ -526,7 +526,7 @@ def _max_upload_bytes() -> int:
 
 
 _ALLOWED_UPLOAD_EXT = (
-    ".xlsx", ".xlsm", ".csv", ".pdf", ".txt", ".md", ".json",
+    ".xlsx", ".xlsm", ".csv", ".docx", ".pdf", ".txt", ".md", ".json",
     ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".c", ".cpp", ".h",
 )
 
