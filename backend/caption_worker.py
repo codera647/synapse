@@ -2011,6 +2011,12 @@ def run_caption_stage_job(stage_job):
             if qwen_tasks:
                 outs: List[Optional[dict]] = []
                 for offset in range(0, len(qwen_tasks), qwen_batch):
+                    # Each visual is a paid VLM call. Check cancel before every batch so a user cancel
+                    # stops within a few visuals instead of after the whole doc's visuals are captioned.
+                    _st = _get_library_pipeline_status(library_id)
+                    if _st is None or _st in _PIPELINE_ABORT_STATUSES:
+                        _mark_stage_job_canceled(job_id, f"Canceled mid-document (library pipeline_status={_st or 'missing'}).")
+                        return
                     outs.extend(_qwen_generate_batch(qwen_tasks[offset : offset + qwen_batch]))
                 for bid, qobj in zip(qwen_task_ids, outs):
                     rec = blocks_by_id.get(bid)

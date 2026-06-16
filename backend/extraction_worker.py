@@ -718,6 +718,14 @@ def run_text_extraction_stage_job(stage_job):
                 # so digital pages keep their native text and pay nothing.
                 page_chars = sum(len((b.get("text") or "").strip()) for b in out_blocks)
                 if page_chars < min_chars and _vlm_scanned_enabled():
+                    # A scanned page is one slow, PAID VLM call. Check the cancel flag right before
+                    # spending — otherwise a user cancel wouldn't take effect until the whole (20+ page)
+                    # doc finished, burning OpenRouter credits the entire time.
+                    st = _get_library_pipeline_status(library_id)
+                    if st is None or st in _PIPELINE_ABORT_STATUSES:
+                        _mark_stage_job_canceled(job_id, f"Canceled mid-document (library pipeline_status={st or 'missing'}).")
+                        return
+
                     import vlm_client
 
                     img = _render_page_image(page, int(os.getenv("EXTRACT_VLM_DPI", "150")))
