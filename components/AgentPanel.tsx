@@ -49,7 +49,8 @@ export default function AgentPanel({
   const [selectedLibs, setSelectedLibs] = useState<string[]>([]);
   const [libMenuOpen, setLibMenuOpen] = useState(false);
   const [visualTypes, setVisualTypes] = useState<Set<string>>(new Set(["bar", "line"]));
-  const [action, setAction] = useState<"visuals" | "docs" | "pdf">("visuals");
+  const [action, setAction] = useState<"visuals" | "docs" | "pdf" | "image">("visuals");
+  const [runningAction, setRunningAction] = useState<string | null>(null);
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [uploadingNames, setUploadingNames] = useState<string[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -242,7 +243,8 @@ export default function AgentPanel({
     const rid = (crypto as { randomUUID?: () => string }).randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
     setMessages((prev) => [...prev, { id: `${rid}-u`, role: "user", content: text }]);
     setRunning(true);
-    setStatus("Starting…");
+    setRunningAction(action);
+    setStatus(action === "image" ? "Generating image…" : "Starting…");
     setPrompt("");
 
     const history = messages
@@ -316,6 +318,7 @@ export default function AgentPanel({
     } finally {
       clearInterval(poll);
       setRunning(false);
+      setRunningAction(null);
       setStatus("");
     }
   };
@@ -364,6 +367,7 @@ export default function AgentPanel({
         <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 p-1">
           {([
             { key: "visuals", label: "Visuals", icon: FiBarChart2 },
+            { key: "image", label: "Image", icon: FiImage },
             { key: "docs", label: "Docs", icon: FiFileText },
             { key: "pdf", label: "PDF", icon: FiFile },
           ] as const).map((a) => (
@@ -506,7 +510,20 @@ export default function AgentPanel({
             {messages.map((m) => (
               <MessageRow key={m.id} m={m} onAnswer={(ans) => { setPrompt(ans); }} />
             ))}
-            {running ? (
+            {running && runningAction === "image" ? (
+              <div>
+                <div className="text-[11px] font-semibold text-white/50">Agent</div>
+                <div className="mt-2 relative h-64 w-64 max-w-full overflow-hidden rounded-xl border border-white/10">
+                  <div className="absolute inset-0 agent-img-shimmer" />
+                  <div className="absolute inset-0 grid place-items-center">
+                    <div className="flex flex-col items-center gap-2 text-xs text-white/75">
+                      <FiImage className="h-6 w-6 animate-pulse text-violet-200" />
+                      {status || "Generating image…"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : running ? (
               <div className="flex items-center gap-2 text-xs text-white/55">
                 <span className="h-2 w-2 animate-pulse rounded-full bg-violet-400" />
                 {status || "Working…"}
@@ -659,7 +676,7 @@ function MessageRow({ m, onAnswer }: { m: AgentMsg; onAnswer: (ans: string) => v
       {(() => {
         const arts = m.artifacts || [];
         const docs = arts.filter((a) => a.format === "document" || a.format === "pdf");
-        const vis = arts.filter((a) => a.format === "vega_lite" || a.format === "mermaid");
+        const vis = arts.filter((a) => a.format !== "document" && a.format !== "pdf");
         return (
           <>
             {docs.length > 0 ? (

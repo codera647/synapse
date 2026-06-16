@@ -28,7 +28,7 @@ export default function AgentArtifactsDrawer({
     let alive = true;
     setLoading(true);
     (async () => {
-      const formats = mode === "visuals" ? ["vega_lite", "mermaid"] : ["document", "pdf"];
+      const formats = mode === "visuals" ? ["vega_lite", "mermaid", "image"] : ["document", "pdf"];
       const { data } = await supabase
         .from("agent_artifacts")
         .select("id, kind, format, title, alt_text, spec_key, png_key, mermaid_text, markdown_text, file_key, render_status, created_at")

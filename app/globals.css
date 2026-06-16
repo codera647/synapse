@@ -241,6 +241,13 @@ body {
   animation: shimmer 2.2s linear infinite;
 }
 
+/* Agent image-generation placeholder (GPT-style shimmering reveal). */
+.agent-img-shimmer {
+  background: linear-gradient(110deg, rgba(26,23,48,0.92) 25%, rgba(91,52,153,0.55) 45%, rgba(26,23,48,0.92) 65%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s linear infinite;
+}
+
 /* Scroll reveal (driven by IntersectionObserver adding .is-visible) */
 .reveal {
   opacity: 0;

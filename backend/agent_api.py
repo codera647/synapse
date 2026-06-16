@@ -372,6 +372,45 @@ def _prior_documents(org_id: str, run_id: str) -> str:
     return "\n\n".join(parts)
 
 
+def _run_image_impl(req: "AgentRunRequest", run_id: str, rid: Optional[str], org_id: str) -> Dict[str, Any]:
+    _set_progress(rid, "Generating image")
+    artifact_id = str(uuid.uuid4())
+    title = (req.message or "Image").strip()[:80]
+    file_key: Optional[str] = None
+    render_status = "ok"
+    errors: List[str] = []
+    try:
+        import agent_image
+        png = agent_image.generate_image(req.message)
+        file_key = f"agents/{run_id}/{artifact_id}.png"
+        adata.put_r2_png(file_key, png)
+    except Exception as exc:
+        render_status = "render_failed"
+        errors = [str(exc)]
+        print(f"[agent] image generation failed: {exc}")
+
+    art: Dict[str, Any] = {
+        "artifact_id": artifact_id, "kind": "image", "format": "image", "title": title,
+        "file_key": file_key, "png_key": file_key, "render_status": render_status, "errors": errors,
+    }
+    narrative = "Here's the image I generated." if file_key else (
+        f"I couldn't generate the image: {errors[0] if errors else 'unknown error'}"
+    )
+    msg_id = _insert_message(run_id, org_id, "assistant", narrative)
+    try:
+        supabase.table("agent_artifacts").insert({
+            "id": artifact_id, "run_id": run_id, "message_id": msg_id, "organization_id": org_id,
+            "kind": "image", "format": "image", "title": title,
+            "file_key": file_key, "png_key": file_key, "render_status": render_status,
+        }).execute()
+    except Exception as exc:
+        print(f"[agent] failed to persist image artifact: {exc}")
+    _set_run_status(run_id, org_id, "done")
+
+    return {"status": "done", "run_id": run_id, "message_id": msg_id, "narrative": narrative,
+            "assumptions": [], "recommendations": [], "artifacts": [art], "client_request_id": rid}
+
+
 def _run_document_impl(req: "AgentRunRequest", run_id: str, rid: Optional[str], org_id: str, mode: str) -> Dict[str, Any]:
     want_pdf = req.action == "pdf"
     _set_progress(rid, "Reading your sources")
@@ -440,6 +479,10 @@ def _agent_run_impl(req: AgentRunRequest) -> Dict[str, Any]:
     run_id = _ensure_run(req.run_id, org_id, req.created_by_user_id, req.library_ids, req.message)
     if not req.run_id:
         _insert_message(run_id, org_id, "user", req.message, created_by=req.created_by_user_id)
+
+    # Image action -> OpenAI image generation path.
+    if req.action == "image":
+        return _run_image_impl(req, run_id, rid, org_id)
 
     # Docs / PDF action -> document-writing path.
     if req.action in ("docs", "pdf"):

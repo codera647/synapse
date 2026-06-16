@@ -7,7 +7,7 @@ import { VegaLite } from "react-vega";
 export type AgentArtifactData = {
   artifact_id: string;
   kind?: string | null;
-  format: "vega_lite" | "mermaid" | "document" | "pdf";
+  format: "vega_lite" | "mermaid" | "document" | "pdf" | "image";
   title?: string | null;
   alt_text?: string | null;
   spec_key?: string | null;
@@ -50,8 +50,18 @@ export default function AgentArtifact({ artifact }: { artifact: AgentArtifactDat
       {failed ? (
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
           <FiAlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span>Couldn&apos;t render this visual{artifact.errors?.length ? `: ${artifact.errors.join("; ")}` : "."}</span>
+          <span>
+            {artifact.format === "image" ? "Couldn't generate this image" : "Couldn't render this visual"}
+            {artifact.errors?.length ? `: ${artifact.errors.join("; ")}` : "."}
+          </span>
         </div>
+      ) : artifact.format === "image" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={artifactUrl(artifact.png_key || artifact.file_key || "")}
+          alt={artifact.title || "Generated image"}
+          className="w-full rounded-lg"
+        />
       ) : artifact.format === "mermaid" ? (
         <MermaidView text={artifact.mermaid_text || ""} id={artifact.artifact_id} />
       ) : (
@@ -210,9 +220,9 @@ function DownloadButton({ artifact }: { artifact: AgentArtifactData }) {
       URL.revokeObjectURL(a.href);
       return;
     }
-    if (artifact.format === "vega_lite" && artifact.png_key) {
+    if ((artifact.format === "vega_lite" || artifact.format === "image") && (artifact.png_key || artifact.file_key)) {
       const a = document.createElement("a");
-      a.href = artifactUrl(artifact.png_key);
+      a.href = artifactUrl(artifact.png_key || artifact.file_key || "");
       a.download = `${fname}.png`;
       document.body.appendChild(a);
       a.click();
