@@ -207,9 +207,14 @@ def stream_extract_images(chosen: List[Dict[str, str]], images_root: Path) -> No
     images_root.mkdir(parents=True, exist_ok=True)
     needed = {c["doc_path"] for c in chosen}        # "docs/English/0989"
     remaining = set(needed)
+    total = len(needed)
     url = f"https://huggingface.co/datasets/{HF_ID}/resolve/main/docs.tar.gz"
-    print("[dbench] streaming docs.tar.gz (23GB) — extracting only your 100 docs (a few GB) ...")
-    r = requests.get(url, stream=True, timeout=1800)
+    print(f"[dbench] streaming docs.tar.gz (23GB) — extracting only your {total} docs (a few GB) ...")
+    headers = {}
+    tok = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    r = requests.get(url, stream=True, timeout=1800, headers=headers)
     r.raise_for_status()
     r.raw.decode_content = True
     gz = gzip.GzipFile(fileobj=r.raw)
@@ -219,11 +224,12 @@ def stream_extract_images(chosen: List[Dict[str, str]], images_root: Path) -> No
     try:
         for m in tf:
             seen += 1
-            if seen % 20000 == 0:
-                print(f"  ...scanned {seen} entries, {len(remaining)} docs left")
+            if seen % 10000 == 0:
+                print(f"  ...scanned {seen} tar entries, {total - len(remaining)}/{total} docs extracted")
             top = "/".join(m.name.split("/")[:3])
             if current is not None and top != current and current in remaining:
                 remaining.discard(current)
+                print(f"  extracted {top}  ({total - len(remaining)}/{total})")
                 if not remaining:
                     break
             current = top
