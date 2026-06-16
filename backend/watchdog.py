@@ -55,6 +55,7 @@ def run_once(supabase, stale_seconds: int, max_attempts: int) -> tuple[int, int]
     failed = 0
     for j in rows:
         attempts = int(j.get("attempts") or 0)
+        lib_id = j.get("library_id")
         if attempts >= max_attempts:
             supabase.table("batch_stage_jobs").update(
                 {
@@ -65,11 +66,28 @@ def run_once(supabase, stale_seconds: int, max_attempts: int) -> tuple[int, int]
                 }
             ).eq("id", j["id"]).eq("status", "running").execute()
             failed += 1
+            # Surface to the frontend instead of an endless "running".
+            if lib_id:
+                try:
+                    supabase.table("libraries").update(
+                        {"pipeline_status": "failed", "status": "error",
+                         "pipeline_error": "A worker stopped responding (possible out-of-memory) and the "
+                                           "job exceeded its retries. Click Resume to continue."}
+                    ).eq("id", lib_id).neq("pipeline_status", "completed").execute()
+                except Exception:
+                    pass
         else:
             supabase.table("batch_stage_jobs").update(
                 {"status": "queued", "assigned_worker": None, "started_at": None}
             ).eq("id", j["id"]).eq("status", "running").execute()
             requeued += 1
+            if lib_id:
+                try:
+                    supabase.table("libraries").update(
+                        {"pipeline_error": "A worker stalled (possible out-of-memory); auto-retrying."}
+                    ).eq("id", lib_id).neq("pipeline_status", "completed").execute()
+                except Exception:
+                    pass
     return requeued, failed
 
 

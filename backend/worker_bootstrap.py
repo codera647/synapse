@@ -3,6 +3,7 @@ import os
 import time
 import signal
 import tempfile
+import threading
 import multiprocessing as mp
 from env_bootstrap import load_env
 from hardware import auto_worker_plan
@@ -245,6 +246,20 @@ _STAGE_ENV = {
     "chat_retriever": "CHAT_RETRIEVER_WORKERS",
 }
 
+# Stages that each load a heavy model into the GPU/RAM — running many copies just OOMs the box and
+# contends on the single GPU, so they're hard-capped low regardless of the user's per-stage number.
+_MODEL_STAGES = {"layout_parser", "image_captioning", "embedding"}
+# Serialize all pool mutations (the autoscaler thread + the Settings route can both reconcile).
+_POOL_MUTEX = threading.Lock()
+_AUTOSCALER_STARTED = False
+
+# Pipeline order — used to prioritise earlier stages when the global cap is tight.
+_STAGE_ORDER = ["sync", "layout_parser", "text_extraction", "image_captioning",
+                "chunking", "embedding", "clustering", "chat_retriever"]
+# Batch-pipeline stages the autoscaler manages (chat_retriever is excluded — it polls the chat
+# queue, not batch_stage_jobs, so it's spawned once at startup and left alone).
+_PIPELINE_STAGES = [s for s in _STAGE_ORDER if s != "chat_retriever"]
+
 
 def _watchdog_proc(stop_event):
     try:
@@ -380,24 +395,194 @@ def _all_procs() -> list:
     return procs
 
 
+# ── Demand-driven scheduling ─────────────────────────────────────────────────────────
+# Workers are NOT all pre-spawned. An autoscaler thread looks at which stages actually have
+# pending work and spawns workers only for those (bounded by a global cap), shifting capacity as
+# work flows sync -> ... -> clustering. This keeps the process count (and torch-import RAM) small
+# and prevents the "31 idle workers OOM the box" failure.
+
+def _pending_by_stage() -> dict:
+    """{stage: (pending_count, set(library_ids))} for jobs that are queued or running."""
+    try:
+        sb = _sb_client()
+        if sb is None:
+            return {}
+        rows = (
+            sb.table("batch_stage_jobs")
+            .select("stage, library_id, status")
+            .in_("status", ["queued", "running"])
+            .limit(20000)
+            .execute()
+            .data
+            or []
+        )
+        out: dict = {}
+        for r in rows:
+            st = r.get("stage")
+            if st not in _STAGE_TARGETS:
+                continue
+            cnt, libs = out.get(st, (0, set()))
+            lid = r.get("library_id")
+            out[st] = (cnt + 1, libs | ({lid} if lid else set()))
+        return out
+    except Exception:
+        return {}
+
+
+def _owner_configs_for_libs(lib_ids: set) -> list:
+    """Per-stage configs of the OWNERS of the libraries that currently have work. This is what makes
+    the live pool honour *the processing user's* settings (not whoever saved settings last)."""
+    try:
+        sb = _sb_client()
+        if sb is None or not lib_ids:
+            return []
+        libs = sb.table("libraries").select("id, organization_id").in_("id", list(lib_ids)).execute().data or []
+        org_ids = {l.get("organization_id") for l in libs if l.get("organization_id")}
+        if not org_ids:
+            return []
+        owners = (
+            sb.table("organization_members").select("user_id, role")
+            .in_("organization_id", list(org_ids)).eq("role", "owner").execute().data or []
+        )
+        cfgs = []
+        for uid in {o.get("user_id") for o in owners if o.get("user_id")}:
+            c = _user_worker_config(uid)
+            if c:
+                cfgs.append(c)
+        return cfgs
+
+
+    except Exception:
+        return []
+
+
+def _global_cap() -> int:
+    return max(1, int(os.getenv("POOL_MAX_WORKERS", "5")))
+
+
+def _apply_global_cap(targets: dict, cap: int) -> dict:
+    """Keep total workers <= cap. Give every active stage at least 1 (earliest pipeline stages
+    first); distribute any remaining budget toward each stage's desired count, earliest first."""
+    if sum(targets.get(s, 0) for s in _PIPELINE_STAGES) <= cap:
+        return targets
+    capped = {s: (1 if targets.get(s, 0) > 0 else 0) for s in _PIPELINE_STAGES}
+    base = sum(capped.values())
+    if base > cap:  # more active stages than the cap — drop the latest stages
+        for s in reversed(_PIPELINE_STAGES):
+            if base <= cap:
+                break
+            if capped.get(s, 0) > 0:
+                capped[s] = 0
+                base -= 1
+        return capped
+    budget = cap - base
+    for s in _PIPELINE_STAGES:
+        if budget <= 0:
+            break
+        want = targets.get(s, 0)
+        if want > capped.get(s, 0):
+            add = min(want - capped[s], budget)
+            capped[s] += add
+            budget -= add
+    return capped
+
+
+def _compute_targets() -> dict:
+    """Desired workers per stage = min(owner-configured, pending jobs), with model stages hard-capped
+    and the whole pool bounded by POOL_MAX_WORKERS. Stages with no pending work get 0."""
+    pending = _pending_by_stage()
+    targets = {s: 0 for s in _PIPELINE_STAGES}
+    if not pending:
+        return targets
+    all_libs = set()
+    for _, libs in pending.values():
+        all_libs |= libs
+    owner_cfgs = _owner_configs_for_libs(all_libs)
+    auto = _auto_suggested()
+    model_cap = max(1, int(os.getenv("POOL_MODEL_STAGE_MAX", "1")))
+
+    def _cfg_max(stage: str) -> int:
+        vals = [c[stage] for c in owner_cfgs if stage in c]
+        if vals:
+            return max(vals)
+        ev = os.getenv(_STAGE_ENV[stage])
+        if ev is not None and ev.strip() != "":
+            try:
+                return max(0, int(ev))
+            except Exception:
+                pass
+        return int(auto.get(stage, 0))
+
+    for stage, (count, _libs) in pending.items():
+        want = min(_cfg_max(stage), count)
+        if stage in _MODEL_STAGES:
+            want = min(want, model_cap)
+        targets[stage] = max(0, want)
+    return _apply_global_cap(targets, _global_cap())
+
+
+def _recover_orphans() -> None:
+    """On (re)start, any job left 'running' was orphaned by a crash (e.g., OOM kill) — no live worker
+    can own it. Requeue them and surface a clear, visible message on the library so the frontend
+    stops showing a silent 'running' that's actually dead."""
+    try:
+        sb = _sb_client()
+        if sb is None:
+            return
+        rows = sb.table("batch_stage_jobs").select("id, library_id").eq("status", "running").limit(5000).execute().data or []
+        if not rows:
+            return
+        ids = [r["id"] for r in rows]
+        lib_ids = {r.get("library_id") for r in rows if r.get("library_id")}
+        for i in range(0, len(ids), 200):
+            sb.table("batch_stage_jobs").update(
+                {"status": "queued", "assigned_worker": None, "started_at": None}
+            ).in_("id", ids[i : i + 200]).eq("status", "running").execute()
+        for lib in lib_ids:
+            sb.table("libraries").update(
+                {"pipeline_error": "Processing was interrupted (the server restarted — possibly out of "
+                                   "memory). It is resuming automatically."}
+            ).eq("id", lib).neq("pipeline_status", "completed").execute()
+        print(f"[pool] recovered {len(ids)} orphaned 'running' jobs across {len(lib_ids)} libraries (prior crash/OOM)")
+    except Exception as exc:
+        print(f"[pool] orphan recovery error: {exc}")
+
+
+def _autoscale_loop(stop_event) -> None:
+    tick = max(2, int(float(os.getenv("POOL_TICK_SECONDS", "6"))))
+    print(f"[pool-autoscaler] started (global cap {_global_cap()}, model-stage cap "
+          f"{os.getenv('POOL_MODEL_STAGE_MAX', '1')}, every {tick}s)")
+    while not stop_event.is_set():
+        try:
+            reconcile_pool(_compute_targets())
+        except Exception as exc:
+            print(f"[pool-autoscaler] error: {exc}")
+        for _ in range(tick):
+            if stop_event.is_set():
+                break
+            time.sleep(1)
+    print("[pool-autoscaler] stopped")
+
+
 def reconcile_pool(targets: dict) -> dict:
     """Scale stages to `targets` live. Scale-up spawns workers (they just claim queued
     jobs); scale-down signals the extra workers to exit on their next loop check."""
     applied = {}
-    for stage, target in (targets or {}).items():
-        if stage not in _STAGE_TARGETS:
-            continue
-        try:
-            target = max(0, int(target))
-        except Exception:
-            continue
-        alive = _alive_workers(stage)
-        if target > len(alive):
-            _spawn_stage(stage, target - len(alive))
-        elif target < len(alive):
-            for w in alive[target:]:
-                w["stop"].set()
-        applied[stage] = target
+    with _POOL_MUTEX:
+        for stage, target in (targets or {}).items():
+            if stage not in _STAGE_TARGETS:
+                continue
+            try:
+                target = max(0, int(target))
+            except Exception:
+                continue
+            alive = _alive_workers(stage)
+            if target > len(alive):
+                _spawn_stage(stage, target - len(alive))
+            elif target < len(alive):
+                for w in alive[target:]:
+                    w["stop"].set()
+            applied[stage] = target
     return applied
 
 
@@ -435,11 +620,15 @@ def start_worker_pool():
     except RuntimeError:
         pass
 
-    counts = _resolve_counts()
-    print("Worker plan (effective):", counts)
+    print(f"Worker pool: demand-driven (global cap {_global_cap()}). Stage workers are spawned only "
+          f"when their stage has pending work, sized by the processing library owner's config.")
+
+    # A prior crash/OOM leaves jobs 'running' with no owner — requeue + surface to the user.
+    _recover_orphans()
 
     _MASTER_STOP = mp.Event()
     _EXTRA_PROCS = []
+    _STAGE_WORKERS.clear()
     # Batch creator (claims library_preprocess jobs) — single.
     pp = mp.Process(target=preprocess_worker, args=(1, _MASTER_STOP))
     pp.start()
@@ -448,10 +637,19 @@ def start_worker_pool():
     wp = mp.Process(target=_watchdog_proc, args=(_MASTER_STOP,))
     wp.start()
     _EXTRA_PROCS.append(wp)
-    # Stage workers (each with its own stop event for live reconcile).
-    _STAGE_WORKERS.clear()
-    for stage, n in counts.items():
-        _spawn_stage(stage, n)
+    # Autoscaler thread (lives in THIS process so it can manage _STAGE_WORKERS): spawns/stops stage
+    # workers based on pending work. No stage workers are pre-spawned.
+    global _AUTOSCALER_STARTED
+    if not _AUTOSCALER_STARTED:
+        t = threading.Thread(target=_autoscale_loop, args=(_MASTER_STOP,), daemon=True, name="pool-autoscaler")
+        t.start()
+        _AUTOSCALER_STARTED = True
+
+    # chat_retriever polls the chat queue (not batch_stage_jobs), so it isn't autoscaled — spawn it
+    # once per its resolved config.
+    cr = int(_resolve_counts().get("chat_retriever", 0) or 0)
+    if cr > 0:
+        _spawn_stage("chat_retriever", cr)
 
     _POOL_STARTED = True
     return _MASTER_STOP, _all_procs()

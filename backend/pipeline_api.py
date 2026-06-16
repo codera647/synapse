@@ -152,9 +152,11 @@ def set_pipeline_workers(req: WorkerConfigRequest, request: Request):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Couldn't save worker config: {exc}")
 
+    # Saved only — the demand-driven autoscaler applies this when this user's library is actually
+    # processing (it resolves worker counts from the library OWNER's config), so each account's runs
+    # use their own settings rather than whoever saved last.
     import worker_bootstrap
-    applied = worker_bootstrap.reconcile_pool(clean)
-    return {"ok": True, "applied": applied, "status": worker_bootstrap.get_pool_status(user_id=str(user.id))}
+    return {"ok": True, "applied": clean, "status": worker_bootstrap.get_pool_status(user_id=str(user.id))}
 
 
 # ----------------------------- request models ------------------------------
