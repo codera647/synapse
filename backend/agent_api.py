@@ -14,6 +14,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import threading
@@ -158,18 +159,16 @@ def _acquire(data_need: Dict[str, Any], org_id: str, library_ids: List[str]):
             meta = [{"name": tab.get("source_name"), "source_ref": ref, "confidence": 1.0}]
             return tab, meta
 
-    # Unstructured upload: parse to text + extract.
+    # Unstructured upload (incl. images via VLM): parse to text + extract.
     if kind == "upload" and ref:
         row = adata.fetch_upload_row(str(ref), org_id)
         if row and row.get("storage_key"):
             try:
-                import document_parsers
-                raw = adata.fetch_r2_bytes(row["storage_key"])
-                ir = document_parsers.parse_to_ir(row.get("mime_type"), row.get("filename"), raw)
-                context = _ir_to_text(ir)
-                ext = aa.extract_series(desc, context, cols_wanted)
-                if ext.get("found"):
-                    return _series_from_extract(ext), [{"name": row.get("filename"), "source_ref": ref, "confidence": ext.get("confidence")}]
+                context = _upload_context_text(row)
+                if context.strip():
+                    ext = aa.extract_series(desc, context, cols_wanted)
+                    if ext.get("found"):
+                        return _series_from_extract(ext), [{"name": row.get("filename"), "source_ref": ref, "confidence": ext.get("confidence")}]
             except Exception as exc:
                 print(f"[agent] unstructured upload parse failed: {exc}")
 
@@ -194,6 +193,36 @@ def _acquire(data_need: Dict[str, Any], org_id: str, library_ids: List[str]):
             print(f"[agent] unstructured retrieval failed: {exc}")
 
     return None, []
+
+
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff")
+
+
+def _upload_context_text(row: Dict[str, Any], max_chars: int = 12000) -> str:
+    """Text content of an uploaded file for the agent: images -> VLM transcription, everything else
+    -> document_parsers."""
+    try:
+        raw = adata.fetch_r2_bytes(row["storage_key"])
+    except Exception:
+        return ""
+    name = (row.get("filename") or "").lower()
+    mime = (row.get("mime_type") or "").lower()
+    if mime.startswith("image/") or name.endswith(_IMAGE_EXTS):
+        try:
+            import vlm_client
+            from PIL import Image
+            if not vlm_client.is_configured():
+                return ""
+            im = Image.open(io.BytesIO(raw)); im.load()
+            return (vlm_client.transcribe_page(im) or "").strip()[:max_chars]
+        except Exception:
+            return ""
+    try:
+        import document_parsers
+        ir = document_parsers.parse_to_ir(row.get("mime_type"), row.get("filename"), raw)
+        return _ir_to_text(ir, max_chars)
+    except Exception:
+        return ""
 
 
 def _ir_to_text(ir: Optional[Dict[str, Any]], max_chars: int = 12000) -> str:
@@ -325,10 +354,7 @@ def _gather_doc_context(org_id: str, library_ids: List[str], upload_ids: List[st
                 if tab:
                     parts.append(f"FILE {name} (table): columns={tab['columns']}; sample={tab['sample_rows'][:10]}")
             else:
-                import document_parsers
-                raw = adata.fetch_r2_bytes(row["storage_key"])
-                ir = document_parsers.parse_to_ir(row.get("mime_type"), name, raw)
-                parts.append(f"FILE {name}:\n{_ir_to_text(ir, 6000)}")
+                parts.append(f"FILE {name}:\n{_upload_context_text(row, 6000)}")
             summary_lines.append(f"- {name} (uploaded)")
             sources_meta.append({"name": name, "source_ref": uid})
         except Exception as exc:
@@ -595,6 +621,7 @@ def _max_upload_bytes() -> int:
 
 _ALLOWED_UPLOAD_EXT = (
     ".xlsx", ".xlsm", ".csv", ".docx", ".pdf", ".txt", ".md", ".json",
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff",
     ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".c", ".cpp", ".h",
 )
 

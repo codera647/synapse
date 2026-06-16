@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import random
@@ -13,6 +14,8 @@ from supabase import create_client
 load_env()
 
 WORKER_ID = os.getenv("WORKER_ID", "extract-1")
+
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff")
 
 
 def now_iso() -> str:
@@ -606,17 +609,40 @@ def run_text_extraction_stage_job(stage_job):
                 continue
 
             if not key or ("pdf" not in mime):
-                # Non-PDF formats (Excel / CSV / code / text): parse to the SAME text IR so
-                # chunk -> embed -> retrieve work unchanged. Skip only if unsupported.
+                # Non-PDF formats (Excel / CSV / Word / code / text / images): parse to the SAME text IR
+                # so chunk -> embed -> retrieve work unchanged. Skip only if unsupported.
                 ir = None
                 if key:
-                    try:
-                        import document_parsers
+                    name_l = (d.get("title") or key or "").lower()
+                    is_image = mime.startswith("image/") or any(name_l.endswith(e) for e in _IMAGE_EXTS)
+                    if is_image and _vlm_scanned_enabled():
+                        # Standalone image -> VLM transcription/description (same path scanned PDF pages
+                        # use), so screenshots / scanned photos / diagrams become searchable text.
+                        import vlm_client
+                        from PIL import Image
 
-                        fname = d.get("title") or (key.rsplit("/", 1)[-1] if key else "")
-                        ir = document_parsers.parse_to_ir(d.get("mime_type"), fname, fetch_r2_bytes(key))
-                    except Exception:
-                        ir = None
+                        raw = fetch_r2_bytes(key)
+                        try:
+                            pim = Image.open(io.BytesIO(raw))
+                            pim.load()
+                            vtext = (vlm_client.transcribe_page(pim) or "").strip()
+                        except Exception as exc:
+                            if vlm_client.is_out_of_credits(exc):
+                                raise RuntimeError("VLM provider is out of credits — top up OpenRouter, then Resume.")
+                            raise RuntimeError(f"Image transcription failed (doc {doc_id}): {exc}")
+                        ir = {"format": "image", "pages": [{"page": 0, "blocks": [{
+                            "block_id": "p0_vlm", "page": 0, "type": "text", "kind": "text", "score": 1.0,
+                            "bbox_img": None, "bbox_pdf": None, "text": vtext, "char_count": len(vtext),
+                            "needs_ocr": False, "source": "vlm_image_transcription",
+                        }]}], "links": []}
+                    else:
+                        try:
+                            import document_parsers
+
+                            fname = d.get("title") or (key.rsplit("/", 1)[-1] if key else "")
+                            ir = document_parsers.parse_to_ir(d.get("mime_type"), fname, fetch_r2_bytes(key))
+                        except Exception:
+                            ir = None
                 if ir and ir.get("pages"):
                     out_key = f"text/{org_id}/{library_id}/{doc_id}.json"
                     put_r2_json(

@@ -263,6 +263,13 @@ def ensure_extension(filename: str, mime_type: str | None) -> str:
         "application/pdf": ".pdf",
         "text/csv": ".csv",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+        "image/bmp": ".bmp",
+        "image/tiff": ".tiff",
     }
     if not mime_type:
         return filename
