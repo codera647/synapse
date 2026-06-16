@@ -76,9 +76,13 @@ def _judge(oai, question: str, ref: str, ans: str) -> str:
         messages=[{"role": "user", "content": prompt}],
     )
     v = (resp.choices[0].message.content or "").strip().upper()
-    for k in ("CORRECT", "PARTIAL", "INCORRECT"):
-        if k in v:
-            return k.lower()
+    # Order matters: "CORRECT" is a substring of "INCORRECT", so test INCORRECT first.
+    if "INCORRECT" in v:
+        return "incorrect"
+    if "PARTIAL" in v:
+        return "partial"
+    if "CORRECT" in v:
+        return "correct"
     return "incorrect"
 
 
