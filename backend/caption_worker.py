@@ -1565,6 +1565,26 @@ def run_caption_stage_job(stage_job):
 
             doc_profile = _infer_doc_profile(text_doc=text_doc, pages_layout=pages)
 
+            # Scanned/image docs were already fully transcribed by the extraction stage (Option B:
+            # Qwen2.5-VL full-page transcription captures text + tables-as-Markdown + figure data).
+            # Re-captioning the figure/table crops here is duplicate VLM work, so skip it — write an
+            # empty manifest and move on. The stage still completes, so chunking (which gates on
+            # image_captioning being done) proceeds normally. Set CAPTION_SKIP_SCANNED=0 to force
+            # full captioning (e.g., if you want cropped figure images shown inline in answers).
+            if doc_profile == "scanned" and os.getenv("CAPTION_SKIP_SCANNED", "1").strip().lower() in {"1", "true", "yes", "on"}:
+                put_r2_json(
+                    f"visuals_manifest/{org_id}/{library_id}/{doc_id}.json",
+                    {
+                        "doc_id": doc_id, "library_id": library_id, "organization_id": org_id,
+                        "created_at": now_iso(), "stage": "image_captioning",
+                        "doc_profile": "scanned", "blocks": [],
+                        "skipped": "already transcribed in extraction (CAPTION_SKIP_SCANNED)",
+                    },
+                )
+                print(f"[caption] doc={doc_id} scanned — skipped redundant captioning (transcribed in extraction)")
+                current += 1
+                continue
+
             min_area_px = int(os.getenv("VIS_MIN_BBOX_AREA_PX", "2500"))
             min_block_score = float(os.getenv("VIS_MIN_BLOCK_SCORE", "0.25"))
             max_financial_per_page = int(os.getenv("VIS_MAX_VISUALS_PER_PAGE_FINANCIAL", "5"))
