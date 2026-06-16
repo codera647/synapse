@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  FiArrowUp, FiBarChart2, FiCheck, FiFileText, FiFile, FiPaperclip, FiPlus, FiX, FiZap,
+  FiArrowUp, FiBarChart2, FiCheck, FiClock, FiFileText, FiFile, FiImage, FiPaperclip, FiPlus, FiX, FiZap,
 } from "react-icons/fi";
 import AgentArtifact, { type AgentArtifactData } from "@/components/AgentArtifact";
+import AgentArtifactsDrawer from "@/components/AgentArtifactsDrawer";
 import ChatMarkdown from "@/components/ChatMarkdown";
 
 type OrgLite = { id: string; name: string };
@@ -30,8 +31,10 @@ const VISUAL_TYPES: Array<{ key: string; label: string }> = [
   { key: "flowchart", label: "Flowchart" },
 ];
 
+type RunLite = { id: string; title: string; status: string; updated_at: string };
+
 export default function AgentPanel({
-  supabase: _supabase,
+  supabase,
   organization,
   libraries,
   currentUserId,
@@ -53,18 +56,110 @@ export default function AgentPanel({
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [runs, setRuns] = useState<RunLite[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [drawerMode, setDrawerMode] = useState<"visuals" | "docs" | null>(null);
 
   const libMenuRef = useRef<HTMLDivElement | null>(null);
+  const historyRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (libMenuRef.current && !libMenuRef.current.contains(e.target as Node)) setLibMenuOpen(false);
+      if (historyRef.current && !historyRef.current.contains(e.target as Node)) setHistoryOpen(false);
     };
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
+
+  // ── Persistence: load past runs, and reload the most recent one on mount (survives refresh). ──
+  const mapArtifactRow = (a: Record<string, unknown>): AgentArtifactData => ({
+    artifact_id: String(a.id),
+    kind: (a.kind as string | null) ?? null,
+    format: (a.format as "vega_lite" | "mermaid") ?? "vega_lite",
+    title: (a.title as string | null) ?? null,
+    alt_text: (a.alt_text as string | null) ?? null,
+    spec_key: (a.spec_key as string | null) ?? null,
+    png_key: (a.png_key as string | null) ?? null,
+    mermaid_text: (a.mermaid_text as string | null) ?? null,
+    render_status: (a.render_status as string | null) ?? "ok",
+  });
+
+  const loadRuns = useCallback(async () => {
+    if (!organization?.id) return;
+    const { data } = await supabase
+      .from("agent_runs")
+      .select("id, title, status, updated_at")
+      .eq("organization_id", organization.id)
+      .order("updated_at", { ascending: false })
+      .limit(40);
+    setRuns(
+      ((data as Array<Record<string, unknown>>) || []).map((r) => ({
+        id: String(r.id),
+        title: String(r.title || "Agent run"),
+        status: String(r.status || ""),
+        updated_at: String(r.updated_at || ""),
+      })),
+    );
+  }, [organization?.id, supabase]);
+
+  const loadRun = useCallback(
+    async (id: string) => {
+      if (!organization?.id) return;
+      const [{ data: msgs }, { data: arts }] = await Promise.all([
+        supabase
+          .from("agent_messages")
+          .select("id, role, content, created_at")
+          .eq("run_id", id)
+          .eq("organization_id", organization.id)
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("agent_artifacts")
+          .select("id, message_id, kind, format, title, alt_text, spec_key, png_key, mermaid_text, render_status, created_at")
+          .eq("run_id", id)
+          .eq("organization_id", organization.id)
+          .order("created_at", { ascending: true }),
+      ]);
+      const artByMsg: Record<string, AgentArtifactData[]> = {};
+      ((arts as Array<Record<string, unknown>>) || []).forEach((a) => {
+        const mid = String(a.message_id || "");
+        (artByMsg[mid] ||= []).push(mapArtifactRow(a));
+      });
+      const reconstructed: AgentMsg[] = ((msgs as Array<Record<string, unknown>>) || []).map((m) => ({
+        id: String(m.id),
+        role: String(m.role || "assistant") as AgentMsg["role"],
+        content: String(m.content || ""),
+        artifacts: String(m.role) === "assistant" ? artByMsg[String(m.id)] || [] : undefined,
+      }));
+      setMessages(reconstructed);
+      setRunId(id);
+      setUploads([]);
+    },
+    [organization?.id, supabase],
+  );
+
+  useEffect(() => {
+    if (!organization?.id) return;
+    let alive = true;
+    (async () => {
+      await loadRuns();
+      if (!alive) return;
+      const { data } = await supabase
+        .from("agent_runs")
+        .select("id")
+        .eq("organization_id", organization.id)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+      const latest = (data as Array<{ id: string }> | null)?.[0]?.id;
+      if (alive && latest && messages.length === 0 && !runId) void loadRun(latest);
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organization?.id]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -164,6 +259,7 @@ export default function AgentPanel({
       };
       if (!res.ok || j.error) throw new Error(j.error || `run ${res.status}`);
       if (j.run_id) setRunId(j.run_id);
+      void loadRuns(); // the backend persisted the run — refresh the history list
 
       if (j.status === "needs_clarification") {
         setMessages((prev) => [
@@ -247,14 +343,79 @@ export default function AgentPanel({
           </span>
         </div>
 
-        <button
-          type="button"
-          onClick={newRun}
-          className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 text-xs text-white/60 hover:text-white"
-        >
-          New
-        </button>
+        <div className="ml-auto flex items-center gap-1.5">
+          {/* Run history */}
+          <div className="relative" ref={historyRef}>
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((v) => !v)}
+              title="Run history"
+              className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/5 text-white/60 hover:text-white"
+            >
+              <FiClock className="h-4 w-4" />
+            </button>
+            {historyOpen ? (
+              <div className="surface-menu absolute right-0 top-11 z-30 max-h-80 w-72 overflow-auto rounded-xl p-1.5 shadow-2xl shadow-black/50">
+                <div className="px-2 py-1 text-[9px] uppercase tracking-wide text-white/35">Recent runs</div>
+                {runs.length === 0 ? (
+                  <div className="px-2.5 py-2 text-xs text-white/40">No past runs.</div>
+                ) : (
+                  runs.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => {
+                        setHistoryOpen(false);
+                        void loadRun(r.id);
+                      }}
+                      className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${
+                        r.id === runId ? "bg-violet-500/20 text-white" : "text-white/70 hover:bg-white/6"
+                      }`}
+                    >
+                      <span className="truncate">{r.title}</span>
+                      {r.id === runId ? <FiCheck className="h-3.5 w-3.5 shrink-0 text-violet-300" /> : null}
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
+          </div>
+
+          {/* Visuals / Docs drawers */}
+          <button
+            type="button"
+            onClick={() => setDrawerMode("visuals")}
+            title="Your visuals"
+            className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/5 text-white/60 hover:text-white"
+          >
+            <FiImage className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setDrawerMode("docs")}
+            title="Your documents"
+            className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/5 text-white/60 hover:text-white"
+          >
+            <FiFileText className="h-4 w-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={newRun}
+            className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 text-xs text-white/60 hover:text-white"
+          >
+            New
+          </button>
+        </div>
       </div>
+
+      <AgentArtifactsDrawer
+        supabase={supabase}
+        organization={organization}
+        open={drawerMode !== null}
+        mode={drawerMode ?? "visuals"}
+        onClose={() => setDrawerMode(null)}
+      />
 
       {/* Visual type multiselect */}
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
@@ -405,6 +566,9 @@ function MessageRow({ m, onAnswer }: { m: AgentMsg; onAnswer: (ans: string) => v
     return (
       <div className="rounded-2xl border border-violet-400/25 bg-violet-500/10 p-3">
         <div className="mb-2 text-xs font-medium text-violet-200">A quick clarification before I build this:</div>
+        {(!m.questions || m.questions.length === 0) && m.content ? (
+          <div className="whitespace-pre-wrap text-sm text-white/85">{m.content}</div>
+        ) : null}
         <div className="space-y-2">
           {(m.questions || []).map((q, i) => (
             <div key={i}>
