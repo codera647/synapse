@@ -438,9 +438,13 @@ function MessageRow({ m, onAnswer }: { m: AgentMsg; onAnswer: (ans: string) => v
       <div className="mt-1 text-sm text-white/85">
         <ChatMarkdown content={m.content} />
       </div>
-      {(m.artifacts || []).map((a) => (
-        <AgentArtifact key={a.artifact_id} artifact={a} />
-      ))}
+      {(m.artifacts || []).length > 0 ? (
+        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {(m.artifacts || []).map((a) => (
+            <AgentArtifact key={a.artifact_id} artifact={a} />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

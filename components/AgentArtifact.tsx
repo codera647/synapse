@@ -25,7 +25,7 @@ export default function AgentArtifact({ artifact }: { artifact: AgentArtifactDat
   const failed = (artifact.render_status || "ok") !== "ok";
 
   return (
-    <div className="my-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+    <div className="flex h-full flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3">
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium text-white/90">{artifact.title || "Visual"}</div>
@@ -79,9 +79,16 @@ function VegaView({ specKey }: { specKey: string }) {
 
   if (err) return <div className="text-xs text-white/40">Chart unavailable ({err}).</div>;
   if (!spec) return <div className="h-40 animate-pulse rounded-lg bg-white/5" />;
+  // Make the chart fit its card (cell) instead of spanning the full row, so several can sit side by side.
+  const fitted = {
+    ...spec,
+    width: "container",
+    height: typeof (spec as { height?: unknown }).height === "number" ? (spec as { height?: number }).height : 240,
+    autosize: { type: "fit", contains: "padding" },
+  };
   return (
-    <div className="overflow-x-auto rounded-lg bg-white p-2">
-      <VegaLite spec={spec as never} actions={false} renderer="canvas" />
+    <div className="w-full overflow-hidden rounded-lg bg-white p-2">
+      <VegaLite spec={fitted as never} actions={false} renderer="canvas" />
     </div>
   );
 }
@@ -113,7 +120,7 @@ function MermaidView({ text, id }: { text: string; id: string }) {
   if (!svg) return <div className="h-40 animate-pulse rounded-lg bg-white/5" />;
   return (
     <div
-      className="overflow-x-auto rounded-lg bg-[#0d0b1a] p-2 [&_svg]:mx-auto"
+      className="max-h-[340px] w-full overflow-auto rounded-lg bg-[#0d0b1a] p-2 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
       data-mermaid-id={id}
       dangerouslySetInnerHTML={{ __html: svg }}
     />
