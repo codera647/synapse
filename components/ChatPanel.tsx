@@ -22,7 +22,7 @@ import {
   FiRefreshCw,
   FiShare2,
 } from "react-icons/fi";
-import { countMonthQueries, getOrgPlan } from "@/lib/usage";
+import { countMonthQueries, getUserOrgIds, getUserPlan } from "@/lib/usage";
 import { planLimits } from "@/lib/planLimits";
 import LimitReachedDialog, { type LimitInfo } from "@/components/LimitReachedDialog";
 
@@ -444,14 +444,14 @@ export default function ChatPanel({
     const { data: userRes } = await supabase.auth.getUser();
     const uid = userRes?.user?.id;
     if (!uid) return;
-    // Personal = your own private threads across ALL your orgs (not tied to a single org).
+    // Personal = your own private threads in the selected (navbar) org.
     // Team = the selected team's shared threads (all members).
     let qb = supabase
       .from("chat_threads")
       .select("id, title, updated_at, selected_library_ids, parent_thread_id, root_thread_id");
     qb = isTeam
       ? qb.eq("organization_id", organization.id).eq("is_team", true)
-      : qb.eq("created_by_user_id", uid).eq("is_team", false);
+      : qb.eq("organization_id", organization.id).eq("created_by_user_id", uid).eq("is_team", false);
     const { data, error } = await qb.order("updated_at", { ascending: false }).limit(80);
 
     if (error) {
@@ -975,9 +975,10 @@ export default function ChatPanel({
     // Enforce the org's monthly query allowance before sending.
     if (organization?.id) {
       try {
+        const orgIds = await getUserOrgIds(supabase);
         const [plan, used] = await Promise.all([
-          getOrgPlan(supabase, organization.id),
-          countMonthQueries(supabase, organization.id),
+          getUserPlan(supabase, orgIds),
+          countMonthQueries(supabase, orgIds),
         ]);
         const lim = planLimits(plan);
         if (Number.isFinite(lim.monthlyQueries) && used >= lim.monthlyQueries) {

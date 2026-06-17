@@ -107,7 +107,7 @@ def _insert_message(run_id: str, org_id: str, role: str, content: str,
 
 
 def _ensure_run(run_id: Optional[str], org_id: str, created_by: Optional[str],
-                library_ids: List[str], title: str) -> str:
+                library_ids: List[str], title: str, is_team: bool = False) -> str:
     if run_id:
         supabase.table("agent_runs").update({"status": "running", "updated_at": _now_iso()}) \
             .eq("id", run_id).eq("organization_id", org_id).execute()
@@ -116,7 +116,7 @@ def _ensure_run(run_id: Optional[str], org_id: str, created_by: Optional[str],
     supabase.table("agent_runs").insert({
         "id": rid, "organization_id": org_id, "created_by_user_id": created_by,
         "title": (title or "New agent run")[:120], "selected_library_ids": library_ids,
-        "status": "running",
+        "status": "running", "is_team": bool(is_team),
     }).execute()
     return rid
 
@@ -335,6 +335,7 @@ class AgentRunRequest(BaseModel):
     history: List[Dict[str, str]] = Field(default_factory=list)
     client_request_id: Optional[str] = None
     run_id: Optional[str] = None
+    is_team: bool = False
 
 
 def _gather_doc_context(org_id: str, library_ids: List[str], upload_ids: List[str], query: str):
@@ -502,7 +503,7 @@ def _agent_run_impl(req: AgentRunRequest) -> Dict[str, Any]:
     mode = (req.thinking_mode or "high").lower()
     visual_types = [v for v in (req.visual_types or _ALL_VISUAL_TYPES) if v in _ALL_VISUAL_TYPES] or _ALL_VISUAL_TYPES
 
-    run_id = _ensure_run(req.run_id, org_id, req.created_by_user_id, req.library_ids, req.message)
+    run_id = _ensure_run(req.run_id, org_id, req.created_by_user_id, req.library_ids, req.message, req.is_team)
     if not req.run_id:
         _insert_message(run_id, org_id, "user", req.message, created_by=req.created_by_user_id)
 

@@ -38,12 +38,14 @@ function pickOne<T>(v: T | T[] | null | undefined): T | null {
 
 export default function ChatWorkspace({
   supabase,
+  organization,
+  libraries,
   onLog,
   personalization = null,
 }: {
   supabase: SupabaseClient;
-  // organization/libraries props are accepted for compatibility but the chat now sources its own
-  // org context (personal = your libraries; team = a team you pick in-panel).
+  // Personal chat follows the org selected in the dashboard navbar (its libraries + its threads).
+  // Team chat is a team you pick in-panel (independent of the navbar).
   organization?: OrgLite | null;
   libraries?: LibraryLite[];
   personalization?: Personalization | null;
@@ -228,8 +230,11 @@ export default function ChatWorkspace({
   }, []);
 
   const selectedTeam = useMemo(() => teams.find((t) => t.id === selectedTeamId) || null, [teams, selectedTeamId]);
-  const activeOrg: OrgLite | null = scope === "team" ? (selectedTeam ? { id: selectedTeam.id, name: selectedTeam.name } : null) : homeOrg;
-  const effectiveLibraries = scope === "team" ? teamLibraries : myLibraries;
+  // Personal = the navbar-selected org (fall back to home org if the navbar hasn't resolved yet).
+  const personalOrg: OrgLite | null = organization ?? homeOrg;
+  const personalLibraries = useMemo<LibraryLite[]>(() => libraries ?? [], [libraries]);
+  const activeOrg: OrgLite | null = scope === "team" ? (selectedTeam ? { id: selectedTeam.id, name: selectedTeam.name } : null) : personalOrg;
+  const effectiveLibraries = scope === "team" ? teamLibraries : personalLibraries;
 
   const readyLibraries = useMemo(
     () => effectiveLibraries.filter(isLibraryReady),

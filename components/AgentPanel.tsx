@@ -10,7 +10,7 @@ import { GeneratingIndicator } from "@/components/AgentStatus";
 import AgentArtifactsDrawer from "@/components/AgentArtifactsDrawer";
 import ChatMarkdown from "@/components/ChatMarkdown";
 import LimitReachedDialog, { type LimitInfo } from "@/components/LimitReachedDialog";
-import { countMonthAgentRuns, getOrgPlan } from "@/lib/usage";
+import { countMonthAgentRuns, getUserOrgIds, getUserPlan } from "@/lib/usage";
 import { planLimits } from "@/lib/planLimits";
 
 type OrgLite = { id: string; name: string };
@@ -44,14 +44,18 @@ export default function AgentPanel({
   organization,
   libraries,
   currentUserId,
+  scope = "personal",
   onLog,
 }: {
   supabase: SupabaseClient;
   organization: OrgLite | null;
   libraries: LibraryLite[];
   currentUserId: string | null;
+  // "personal" = your own runs in the selected org; "team" = the selected team's shared runs.
+  scope?: "personal" | "team";
   onLog?: LogFn;
 }) {
+  const isTeam = scope === "team";
   const [selectedLibs, setSelectedLibs] = useState<string[]>([]);
   const [libMenuOpen, setLibMenuOpen] = useState(false);
   const [visualTypes, setVisualTypes] = useState<Set<string>>(new Set(["bar", "line"]));
@@ -104,12 +108,14 @@ export default function AgentPanel({
 
   const loadRuns = useCallback(async () => {
     if (!organization?.id) return;
-    const { data } = await supabase
+    // Personal = your own runs in this (navbar) org; Team = the selected team's shared runs.
+    let q = supabase
       .from("agent_runs")
       .select("id, title, status, updated_at")
       .eq("organization_id", organization.id)
-      .order("updated_at", { ascending: false })
-      .limit(40);
+      .eq("is_team", isTeam);
+    if (!isTeam && currentUserId) q = q.eq("created_by_user_id", currentUserId);
+    const { data } = await q.order("updated_at", { ascending: false }).limit(40);
     setRuns(
       ((data as Array<Record<string, unknown>>) || []).map((r) => ({
         id: String(r.id),
@@ -118,7 +124,7 @@ export default function AgentPanel({
         updated_at: String(r.updated_at || ""),
       })),
     );
-  }, [organization?.id, supabase]);
+  }, [organization?.id, supabase, isTeam, currentUserId]);
 
   const loadRun = useCallback(
     async (id: string) => {
@@ -252,9 +258,10 @@ export default function AgentPanel({
 
     // Enforce the org's monthly agent-run allowance before starting.
     try {
+      const orgIds = await getUserOrgIds(supabase);
       const [plan, used] = await Promise.all([
-        getOrgPlan(supabase, organization.id),
-        countMonthAgentRuns(supabase, organization.id),
+        getUserPlan(supabase, orgIds),
+        countMonthAgentRuns(supabase, orgIds),
       ]);
       const lim = planLimits(plan);
       if (Number.isFinite(lim.monthlyAgentRuns) && used >= lim.monthlyAgentRuns) {
@@ -312,6 +319,7 @@ export default function AgentPanel({
           history,
           client_request_id: rid,
           run_id: runId,
+          is_team: isTeam,
         }),
       });
       const j = (await res.json()) as {

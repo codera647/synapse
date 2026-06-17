@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import UsageBarChart, { type UsagePoint } from "@/components/usage/UsageBarChart";
 import { planLimits } from "@/lib/planLimits";
+import { getUserOrgIds, getUserPlan } from "@/lib/usage";
 
 type OrgLite = { id: string; name: string };
 type LogFn = (e: { level: "info" | "warn" | "error" | "success"; message: string; details?: unknown }) => void;
@@ -94,10 +95,10 @@ function fmtCompact(n: number): string {
 
 export default function UsageWorkspace({
   supabase,
-  organization,
   onLog,
 }: {
   supabase: SupabaseClient;
+  // organization is accepted for prop compatibility but usage is now per-USER (all the user's orgs).
   organization?: OrgLite | null;
   onLog?: LogFn;
 }) {
@@ -110,23 +111,10 @@ export default function UsageWorkspace({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      const uid = user?.id;
-
-      // resolve the user's home organization (owner first), like the other workspaces
-      let orgId = organization?.id ?? null;
-      if (uid) {
-        const { data: mems } = await supabase
-          .from("organization_members")
-          .select("organization_id, role")
-          .eq("user_id", uid);
-        const rows = (mems as Array<Record<string, unknown>>) || [];
-        const owner = rows.find((m) => String(m.role) === "owner");
-        orgId = String((owner || rows[0])?.organization_id || orgId || "");
-      }
-      if (!orgId) {
+      // Usage is per-USER: pool across every organization the user belongs to (a new org must not
+      // reset the allowance), matching how the limit gates count.
+      const orgIds = await getUserOrgIds(supabase);
+      if (!orgIds.length) {
         setRaw(null);
         return;
       }
@@ -137,30 +125,30 @@ export default function UsageWorkspace({
         : addDays(startOfDay(now), -29)
       ).toISOString();
 
-      const [docsR, libsR, chunksR, chatR, runsR, agentMsgsR, graphsR, artsR, orgR] = await Promise.all([
-        supabase.from("documents").select("file_size_bytes, created_at").eq("organization_id", orgId),
-        supabase.from("libraries").select("*", { count: "exact", head: true }).eq("organization_id", orgId),
-        supabase.from("chunk_embeddings").select("*", { count: "exact", head: true }).eq("organization_id", orgId),
+      const [docsR, libsR, chunksR, chatR, runsR, agentMsgsR, graphsR, artsR, plan] = await Promise.all([
+        supabase.from("documents").select("file_size_bytes, created_at").in("organization_id", orgIds),
+        supabase.from("libraries").select("*", { count: "exact", head: true }).in("organization_id", orgIds),
+        supabase.from("chunk_embeddings").select("*", { count: "exact", head: true }).in("organization_id", orgIds),
         // Pull role + content (windowed) so we can both count queries and estimate token volume.
         supabase
           .from("chat_messages")
           .select("role, content, created_at")
-          .eq("organization_id", orgId)
+          .in("organization_id", orgIds)
           .gte("created_at", windowStart)
           .limit(8000),
-        supabase.from("agent_runs").select("created_at, status").eq("organization_id", orgId).gte("created_at", windowStart),
+        supabase.from("agent_runs").select("created_at, status").in("organization_id", orgIds).gte("created_at", windowStart),
         supabase
           .from("agent_messages")
           .select("role, content, created_at")
-          .eq("organization_id", orgId)
+          .in("organization_id", orgIds)
           .gte("created_at", windowStart)
           .limit(8000),
-        supabase.from("kg_graphs").select("created_at, status, node_count, edge_count").eq("organization_id", orgId),
-        supabase.from("agent_artifacts").select("*", { count: "exact", head: true }).eq("organization_id", orgId),
-        supabase.from("organizations").select("plan").eq("id", orgId).maybeSingle(),
+        supabase.from("kg_graphs").select("created_at, status, node_count, edge_count").in("organization_id", orgIds),
+        supabase.from("agent_artifacts").select("*", { count: "exact", head: true }).in("organization_id", orgIds),
+        getUserPlan(supabase, orgIds),
       ]);
 
-      setPlan(String((orgR.data as { plan?: string } | null)?.plan || "free"));
+      setPlan(plan);
       setRaw({
         docs: ((docsR.data as DocRow[]) || []).map((d) => ({ file_size_bytes: d.file_size_bytes, created_at: d.created_at })),
         chatMsgs: (chatR.data as MsgRow[]) || [],
@@ -177,7 +165,7 @@ export default function UsageWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [supabase, organization, onLog]);
+  }, [supabase, onLog]);
 
   useEffect(() => {
     void load();

@@ -8,7 +8,7 @@ import {
   openGoogleDriveFilePicker, downloadDriveFile, driveFileName, type PickedDriveFile,
 } from "@/lib/googleDrivePicker";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
-import { countDocuments, sumStorageBytes, getOrgPlan } from "@/lib/usage";
+import { countDocuments, sumStorageBytes, getUserOrgIds, getUserPlan } from "@/lib/usage";
 import { planLimits } from "@/lib/planLimits";
 import LimitReachedDialog, { type LimitInfo } from "@/components/LimitReachedDialog";
 
@@ -172,10 +172,11 @@ export default function AddFilesModal({
     const sb = supabaseRef.current;
     if (sb) {
       try {
+        const orgIds = await getUserOrgIds(sb);
         const [plan, docs, used] = await Promise.all([
-          getOrgPlan(sb, organizationId),
-          countDocuments(sb, organizationId),
-          sumStorageBytes(sb, organizationId),
+          getUserPlan(sb, orgIds),
+          countDocuments(sb, orgIds),
+          sumStorageBytes(sb, orgIds),
         ]);
         const lim = planLimits(plan);
         setLimitPlanLabel(lim.label);

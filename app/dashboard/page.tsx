@@ -19,7 +19,7 @@ import TeamWorkspace from "@/components/TeamWorkspace";
 import UsageWorkspace from "@/components/UsageWorkspace";
 import AddFilesModal from "@/components/AddFilesModal";
 import LimitReachedDialog, { type LimitInfo } from "@/components/LimitReachedDialog";
-import { countLibraries, getOrgPlan } from "@/lib/usage";
+import { countLibraries, getUserOrgIds, getUserPlan } from "@/lib/usage";
 import { planLimits } from "@/lib/planLimits";
 import SettingsModal, { type Personalization } from "@/components/SettingsModal";
 
@@ -309,9 +309,10 @@ function DashboardPageInner() {
     const openCreateLibrary = async () => {
         if (currentOrg) {
             try {
+                const orgIds = await getUserOrgIds(supabase);
                 const [plan, libs] = await Promise.all([
-                    getOrgPlan(supabase, currentOrg.id),
-                    countLibraries(supabase, currentOrg.id),
+                    getUserPlan(supabase, orgIds),
+                    countLibraries(supabase, orgIds),
                 ]);
                 const lim = planLimits(plan);
                 if (libs >= lim.libraries) {
