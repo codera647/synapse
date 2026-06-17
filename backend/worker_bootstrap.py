@@ -96,6 +96,7 @@ def sync_batch_worker(worker_id: int, stop_event: mp.Event):
 def layout_worker(worker_id: int, stop_event: mp.Event):
     # Import inside the process so uvicorn can boot even if layout deps aren't installed yet,
     # and to avoid initializing CUDA in the parent process.
+    import gpu_budget
     from layout_worker import claim_layout_stage_job, run_layout_stage_job
     wid = f"layout-{worker_id}"
     print(f"[{wid}] started")
@@ -104,9 +105,14 @@ def layout_worker(worker_id: int, stop_event: mp.Event):
         if not stage_job:
             time.sleep(2)
             continue
+        measure = gpu_budget.footprint_mb("layout_parser") is None
+        free0 = gpu_budget.free_mb() if measure else None
         try:
             run_layout_stage_job(stage_job)
-        except Exception:
+            if measure:
+                gpu_budget.record_drop("layout_parser", free0)
+        except Exception as exc:
+            gpu_budget.note_exception("layout_parser", exc)
             time.sleep(1)
     print(f"[{wid}] stopped")
 
@@ -131,6 +137,7 @@ def extraction_worker(worker_id: int, stop_event: mp.Event):
 
 def caption_worker(worker_id: int, stop_event: mp.Event):
     # Import inside the process so uvicorn can boot even if caption deps aren't installed yet.
+    import gpu_budget
     from caption_worker import claim_caption_stage_job, run_caption_stage_job
 
     wid = f"caption-{worker_id}"
@@ -140,9 +147,14 @@ def caption_worker(worker_id: int, stop_event: mp.Event):
         if not stage_job:
             time.sleep(2)
             continue
+        measure = gpu_budget.footprint_mb("image_captioning") is None
+        free0 = gpu_budget.free_mb() if measure else None
         try:
             run_caption_stage_job(stage_job)
-        except Exception:
+            if measure:
+                gpu_budget.record_drop("image_captioning", free0)
+        except Exception as exc:
+            gpu_budget.note_exception("image_captioning", exc)
             time.sleep(1)
     print(f"[{wid}] stopped")
 
@@ -167,6 +179,7 @@ def chunk_worker(worker_id: int, stop_event: mp.Event):
 
 def embed_worker(worker_id: int, stop_event: mp.Event):
     # Import inside the process to avoid loading torch/models in the parent.
+    import gpu_budget
     from embed_worker import claim_embedding_stage_job, run_embedding_stage_job
 
     wid = f"embed-{worker_id}"
@@ -176,9 +189,14 @@ def embed_worker(worker_id: int, stop_event: mp.Event):
         if not stage_job:
             time.sleep(2)
             continue
+        measure = gpu_budget.footprint_mb("embedding") is None
+        free0 = gpu_budget.free_mb() if measure else None
         try:
             run_embedding_stage_job(stage_job)
-        except Exception:
+            if measure:
+                gpu_budget.record_drop("embedding", free0)
+        except Exception as exc:
+            gpu_budget.note_exception("embedding", exc)
             time.sleep(1)
     print(f"[{wid}] stopped")
 
@@ -490,8 +508,9 @@ def _apply_global_cap(targets: dict, cap: int) -> dict:
 
 
 def _compute_targets() -> dict:
-    """Desired workers per stage = min(owner-configured, pending jobs), with model stages hard-capped
-    and the whole pool bounded by POOL_MAX_WORKERS. Stages with no pending work get 0."""
+    """Desired workers per stage = min(owner-configured, pending jobs), with the GPU model stages
+    bounded by the live VRAM budget (gpu_budget.pack_model_targets) and the whole pool bounded by
+    POOL_MAX_WORKERS. Stages with no pending work get 0."""
     pending = _pending_by_stage()
     targets = {s: 0 for s in _PIPELINE_STAGES}
     if not pending:
@@ -518,6 +537,20 @@ def _compute_targets() -> dict:
     # waiting for that stage (no point spawning 8 sync workers for 3 pending batches).
     for stage, (count, _libs) in pending.items():
         targets[stage] = max(0, min(_cfg_max(stage), count))
+
+    # Bound the GPU model stages to what actually fits in VRAM (measured per-model footprint
+    # vs the live budget) instead of a hardcoded cap. The user's chosen count is still honoured
+    # up to whatever the hardware can hold; excess capacity just isn't spawned (its jobs stay
+    # queued). Fails open (no gating) when there's no GPU or nvidia-smi is unavailable.
+    try:
+        import gpu_budget
+        model_desired = {s: targets.get(s, 0) for s in _MODEL_STAGES if targets.get(s, 0) > 0}
+        if model_desired:
+            for stage, n in gpu_budget.pack_model_targets(model_desired).items():
+                targets[stage] = n
+    except Exception as exc:
+        print(f"[pool-autoscaler] GPU budget skipped: {exc}")
+
     return _apply_global_cap(targets, _global_cap())
 
 
@@ -550,8 +583,13 @@ def _recover_orphans() -> None:
 
 def _autoscale_loop(stop_event) -> None:
     tick = max(2, int(float(os.getenv("POOL_TICK_SECONDS", "6"))))
-    print(f"[pool-autoscaler] started (global cap {_global_cap()}, model-stage cap "
-          f"{os.getenv('POOL_MODEL_STAGE_MAX', '1')}, every {tick}s)")
+    try:
+        import gpu_budget
+        _budget = int(gpu_budget.usable_budget_mb())
+    except Exception:
+        _budget = 0
+    print(f"[pool-autoscaler] started (global cap {_global_cap()}, GPU VRAM budget "
+          f"{(_budget and f'{_budget} MB') or 'n/a (CPU)'}, every {tick}s)")
     while not stop_event.is_set():
         try:
             reconcile_pool(_compute_targets())
