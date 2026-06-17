@@ -7,7 +7,7 @@ import { openGoogleDriveFolderPicker } from "@/lib/googleDrivePicker";
 import DashboardNavbar from "@/components/DashboardNavbar";
 import { FiGrid, FiList, FiSearch, FiFilter, FiPlus } from "react-icons/fi";
 import DashboardSidebar from "@/components/DashboardSidebar";
-import Loader from "@/components/Loader";
+import LibrariesSkeleton from "@/components/LibrariesSkeleton";
 import LogPanel from "@/components/LogPanel";
 import { LogProvider, useLog } from "@/context/LogContext";
 import LibraryDrawer from "@/components/LibraryDrawer";
@@ -1198,10 +1198,10 @@ function DashboardPageInner() {
                     {/* Sidebar on the left */}
                     <DashboardSidebar onToggleConsole={toggleConsole} consoleOpen={consoleOpen} mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
 
-                    {/* Centered loading text in main area */}
-                    <div className="flex-1 flex items-center justify-center text-gray-400 text-sm md:ml-16">
-                        <Loader />
-                    </div>
+                    {/* Animated libraries skeleton while the workspace loads */}
+                    <main className="flex-1 w-full min-w-0 md:ml-16">
+                        <LibrariesSkeleton />
+                    </main>
                 </div>
             </div>
         );
