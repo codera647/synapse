@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// This module wraps the Google Picker/GSI browser globals, which ship no types.
 declare global {
     interface Window {
         google: any;
@@ -77,6 +79,42 @@ export async function openGoogleDriveFolderPicker(
             if (data.action === window.google.picker.Action.PICKED) {
                 const doc = data.docs[0];
                 onPicked(doc.id, doc.name);
+            }
+        })
+        .build();
+
+    picker.setVisible(true);
+}
+
+export type PickedDriveFile = { id: string; name: string; mimeType?: string };
+
+/** Multi-select Google Drive FILE picker (used to add files to an existing library). */
+export async function openGoogleDriveFilePicker(
+    onPicked: (files: PickedDriveFile[]) => void
+) {
+    if (!API_KEY) {
+        throw new Error("Missing NEXT_PUBLIC_GOOGLE_API_KEY");
+    }
+
+    const accessToken = await requestAccessToken();
+
+    const picker = new window.google.picker.PickerBuilder()
+        .setDeveloperKey(API_KEY)
+        .setOAuthToken(accessToken)
+        .enableFeature(window.google.picker.Feature.MULTISELECT_ENABLED)
+        .addView(
+            new window.google.picker.DocsView()
+                .setIncludeFolders(true)
+                .setSelectFolderEnabled(false)
+        )
+        .setCallback((data: any) => {
+            if (data.action === window.google.picker.Action.PICKED) {
+                const files = (data.docs || []).map((d: any) => ({
+                    id: d.id,
+                    name: d.name,
+                    mimeType: d.mimeType,
+                }));
+                onPicked(files);
             }
         })
         .build();

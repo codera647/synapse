@@ -621,18 +621,24 @@ def run_sync_stage_job(stage_job):
             )
             return
 
-        source = (
-            supabase.table("library_sources")
-            .select("refresh_token")
-            .eq("library_id", library_id)
-            .eq("organization_id", org_id)
-            .single()
-        )
-        source = _sb_execute(source, context="library_sources.select(refresh_token)")
-        refresh = (source.data or {}).get("refresh_token")
-        if not refresh:
-            raise RuntimeError("Missing refresh_token for library_sources")
-        access_token = get_access_token(refresh)
+        # Drive access token is fetched lazily — only when this batch actually contains a
+        # Drive-sourced document. Locally-uploaded files (no gdrive_file_id, already in R2) need no
+        # Drive token, so a batch of only local files still processes even if the Drive token is stale.
+        _access_token_box: dict = {}
+
+        def _drive_token():
+            if "tok" not in _access_token_box:
+                source = _sb_execute(
+                    supabase.table("library_sources").select("refresh_token")
+                    .eq("library_id", library_id).eq("organization_id", org_id).single(),
+                    context="library_sources.select(refresh_token)",
+                )
+                refresh = (source.data or {}).get("refresh_token")
+                if not refresh:
+                    raise RuntimeError("Missing refresh_token for library_sources")
+                _access_token_box["tok"] = get_access_token(refresh)
+            return _access_token_box["tok"]
+
         total = int(stage_job.get("progress_total") or len(doc_ids) or 0)
         current = int(stage_job.get("progress_current") or 0)
         if total <= 0:
@@ -668,7 +674,7 @@ def run_sync_stage_job(stage_job):
             file_id = d["gdrive_file_id"]
             name = d.get("title") or file_id
             mime = d.get("mime_type")
-            content, effective_mime = download_drive_file(access_token, file_id, mime)
+            content, effective_mime = download_drive_file(_drive_token(), file_id, mime)
             name = ensure_extension(name, effective_mime)
             storage_path = upload_to_r2(org_id, org_name, library_id, lib_name, file_id, name, content)
 

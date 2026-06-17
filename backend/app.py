@@ -48,6 +48,11 @@ try:
 except Exception:  # pragma: no cover
     kg_router = None
 
+try:
+    from library_files_api import router as library_files_router  # type: ignore
+except Exception:  # pragma: no cover
+    library_files_router = None
+
 
 app = FastAPI(title="Synapse Backend", version="1.0.0")
 
@@ -112,6 +117,9 @@ if agent_router is not None:
 
 if kg_router is not None:
     app.include_router(kg_router)
+
+if library_files_router is not None:
+    app.include_router(library_files_router)
 
 
 _worker_stop = None

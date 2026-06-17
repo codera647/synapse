@@ -16,6 +16,7 @@ import AgentWorkspace from "@/components/AgentWorkspace";
 import KnowledgeGraphWorkspace from "@/components/KnowledgeGraphWorkspace";
 import TeamWorkspace from "@/components/TeamWorkspace";
 import UsageWorkspace from "@/components/UsageWorkspace";
+import AddFilesModal from "@/components/AddFilesModal";
 import SettingsModal, { type Personalization } from "@/components/SettingsModal";
 
 type Library = {
@@ -71,6 +72,7 @@ function DashboardPageInner() {
     const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
     const [personalization, setPersonalization] = useState<Personalization | null>(null);
     const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
+    const [addFilesLib, setAddFilesLib] = useState<Library | null>(null);
     const [organizations, setOrganizations] = useState<Organization[]>([]);
     const [libraries, setLibraries] = useState<Library[]>([]);
     const [loading, setLoading] = useState(true);
@@ -1377,7 +1379,20 @@ function DashboardPageInner() {
                                                 <span className="relative">{isResuming ? "Resuming..." : "Resume"}</span>
                                             </button>
                                         ) : (
-                                            pipelineStatus === "completed" ? null : (
+                                            pipelineStatus === "completed" ? (
+                                            <button
+                                                type="button"
+                                                title="Add files to this library"
+                                                aria-label="Add files"
+                                                className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-white/70 transition hover:border-violet-400/40 hover:bg-violet-500/10 hover:text-white"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setAddFilesLib(lib);
+                                                }}
+                                            >
+                                                <FiPlus className="h-3.5 w-3.5" /> Add files
+                                            </button>
+                                            ) : (
                                             <button
                                                 type="button"
                                                 className={getCardActionButtonClasses("start")}
@@ -1404,6 +1419,26 @@ function DashboardPageInner() {
                     )}
                 </main>
             </div>
+
+            {addFilesLib && currentOrg && (
+                <AddFilesModal
+                    open={!!addFilesLib}
+                    onClose={() => setAddFilesLib(null)}
+                    organizationId={currentOrg.id}
+                    library={{ id: addFilesLib.id, name: addFilesLib.name }}
+                    onStarted={(libraryId) => {
+                        setLibraries((prev) =>
+                            prev.map((l) =>
+                                l.id === libraryId
+                                    ? { ...l, pipeline_status: "queued", status: "processing", pipeline_error: null }
+                                    : l,
+                            ),
+                        );
+                        startLibraryStatusPolling(libraryId);
+                    }}
+                    onLog={(e) => addLog({ level: e.level, source: "library", message: e.message, details: e.details })}
+                />
+            )}
 
             {createLibraryOpen && (
                 <div className="fixed inset-0 z-40 flex items-start justify-center px-4 pt-16">
@@ -1714,6 +1749,12 @@ function DashboardPageInner() {
                 onDeleted={(libraryId) => {
                     setLibraries((prev) => prev.filter((l) => l.id !== libraryId));
                     if (activeLibrary?.id === libraryId) closeLibraryDetails();
+                }}
+                onAddFiles={() => {
+                    if (drawerLibrary) {
+                        setAddFilesLib(drawerLibrary);
+                        setDrawerOpen(false);
+                    }
                 }}
             />
         </div>

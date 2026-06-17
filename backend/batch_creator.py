@@ -83,3 +83,73 @@ def create_library_batches(
         ).execute()
 
     return {"created": len(batches), "batch_size": batch_size}
+
+
+def append_documents_to_library(
+    organization_id: str,
+    library_id: str,
+    doc_ids: list,
+    worker_count: int,
+    stage: str = "sync",
+):
+    """Append NEW documents (by id) to an ALREADY-batched library as extra batches, without
+    touching existing batches/stage jobs. Used when adding files to a processed library so only
+    the new files are processed. Returns {created, batch_size}."""
+    if worker_count <= 0:
+        worker_count = 1
+    doc_ids = [d for d in (doc_ids or []) if d]
+    total = len(doc_ids)
+    if total == 0:
+        return {"created": 0, "batch_size": 0}
+
+    # Continue batch_index after whatever already exists for this library.
+    existing = (
+        supabase.table("library_batches")
+        .select("batch_index")
+        .eq("library_id", library_id)
+        .order("batch_index", desc=True)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    start_index = (int(existing[0]["batch_index"]) + 1) if existing else 0
+
+    max_batches = max(1, int(os.getenv("BATCH_MAX_COUNT", "64")))
+    n_batches = min(max(1, int(worker_count)), max_batches, total)
+    batch_size = max(1, math.ceil(total / n_batches))
+    batches = [doc_ids[i : i + batch_size] for i in range(0, total, batch_size)]
+
+    for offset, batch in enumerate(batches):
+        inserted = (
+            supabase.table("library_batches")
+            .insert(
+                {
+                    "organization_id": organization_id,
+                    "library_id": library_id,
+                    "batch_index": start_index + offset,
+                    "status": "queued",
+                    "doc_ids": batch,
+                    "doc_count": len(batch),
+                }
+            )
+            .execute()
+        )
+        if not inserted.data:
+            raise RuntimeError("Failed to insert library_batches row")
+        batch_id = inserted.data[0]["id"]
+        supabase.table("batch_stage_jobs").insert(
+            {
+                "organization_id": organization_id,
+                "library_id": library_id,
+                "batch_id": batch_id,
+                "stage": stage,
+                "status": "queued",
+                "attempts": 0,
+                "payload": {},
+                "progress_current": 0,
+                "progress_total": len(batch),
+            }
+        ).execute()
+
+    return {"created": len(batches), "batch_size": batch_size}

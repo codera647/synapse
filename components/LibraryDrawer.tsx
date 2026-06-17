@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FiX, FiRefreshCcw, FiDatabase, FiLayers, FiTrash2, FiAlertTriangle } from "react-icons/fi";
+import { FiX, FiRefreshCcw, FiDatabase, FiLayers, FiTrash2, FiAlertTriangle, FiPlus } from "react-icons/fi";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import PipelineStepper from "@/components/PipelineStepper";
 
@@ -28,6 +28,7 @@ type Props = {
   supabase: SupabaseClient;
   onLog?: (entry: { level: "info" | "warn" | "error" | "success"; message: string; details?: unknown }) => void;
   onDeleted?: (libraryId: string) => void;
+  onAddFiles?: () => void;
 };
 
 function formatDate(value: string | null | undefined) {
@@ -87,7 +88,7 @@ function StatCard({
   );
 }
 
-export default function LibraryDrawer({ open, onClose, library, organizationId, supabase, onLog, onDeleted }: Props) {
+export default function LibraryDrawer({ open, onClose, library, organizationId, supabase, onLog, onDeleted, onAddFiles }: Props) {
   const [docsCount, setDocsCount] = useState<number | null>(null);
   const [embedCount, setEmbedCount] = useState<number | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
@@ -212,6 +213,16 @@ export default function LibraryDrawer({ open, onClose, library, organizationId, 
             </div>
 
             <div className="flex items-center gap-2">
+              {onAddFiles && library.pipeline_status === "completed" ? (
+                <button
+                  type="button"
+                  onClick={onAddFiles}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-2 text-xs font-medium text-gray-200 hover:border-violet-400/40 hover:bg-violet-500/10 hover:text-white transition-colors"
+                  title="Add files to this library"
+                >
+                  <FiPlus className="h-4 w-4" /> Add files
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={deleteLibrary}
