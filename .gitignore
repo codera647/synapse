@@ -70,14 +70,6 @@ docs/
 Test_Samples/
 dataset_builders/
 
-# Thesis build artifacts (keep source, ignore LaTeX output + caches)
-Thesis/**/*.aux
-Thesis/**/*.log
-Thesis/**/*.out
-Thesis/**/*.toc
-Thesis/**/*.lof
-Thesis/**/*.lot
-Thesis/**/*.bbl
-Thesis/**/*.blg
-Thesis/main.pdf
-Thesis/diagrams/__pycache__/
+# Thesis (local only — do not commit) + the generated Overleaf zip
+Thesis/
+Thesis_overleaf.zip
