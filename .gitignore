@@ -65,6 +65,11 @@ backend/eval/double_bench_demo/
 /Python_Files/
 /Cpp_Files/
 
+# local docs, sample inputs and dataset builders — do not commit
+docs/
+Test_Samples/
+dataset_builders/
+
 # Thesis build artifacts (keep source, ignore LaTeX output + caches)
 Thesis/**/*.aux
 Thesis/**/*.log

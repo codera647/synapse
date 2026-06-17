@@ -1,0 +1,183 @@
+\chapter{Design and Architecture}
+\label{ch:design}
+
+\section{Introduction}
+
+This chapter describes how the platform is put together. It begins with the
+overall architecture and the principles that guided it, then explains the design
+of each major subsystem: the grounded chat, the agent, and the knowledge graph.
+It then presents the data model that ties everything together and the way the
+system is deployed. The implementation detail that realises this design is the
+subject of Chapter~5.
+
+\section{Architectural Overview}
+
+Synapse is organised into tiers, as shown in Figure~\ref{fig:architecture}. The
+web application runs in the browser and talks to a Cloudflare Worker, which hosts
+the application at the edge and forwards requests to the backend. The backend is a
+FastAPI service running on a GPU-equipped server, and it is where the real work
+happens: an API layer receives requests, a pool of workers processes documents
+through the pipeline, a retrieval and reasoning component answers questions, and a
+knowledge-graph builder constructs the graph. These components share two stores,
+a Supabase database with vector search for text and embeddings and a Cloudflare
+R2 bucket for files and artefacts, and they call external model services for
+language and vision tasks.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{fig_architecture.png}
+  \caption{High-level architecture of Synapse. The browser talks to a Cloudflare
+  Worker that hosts the application and proxies to a FastAPI service on a
+  GPU server. The backend separates the API layer, the document workers, the
+  retrieval and reasoning component and the knowledge-graph builder, all sharing a
+  Supabase database and an R2 object store and calling external model services.
+  This separation lets each concern scale and evolve on its own.}
+  \label{fig:architecture}
+\end{figure}
+
+\section{Design Principles}
+
+A small number of principles shaped the design. The first is \emph{grounding}:
+every answer must be traceable to a source passage, and the system must be able to
+say it does not know. The second is \emph{separation of concerns}: ingestion,
+retrieval, artefact generation and graph construction are independent components
+with clear interfaces, which kept each one simple and allowed them to be built and
+tested in turn. The third is \emph{resumable processing}: documents move through
+the pipeline in stages that can be retried, so a failure never discards completed
+work. The fourth is \emph{tenant isolation}: every piece of data belongs to an
+organisation, and access is enforced at the database rather than trusted to the
+application. These principles recur throughout the subsystems described below.
+
+\section{The Grounded Chat Subsystem}
+
+The grounded chat answers questions using only the user's selected libraries.
+Its design, shown in Figure~\ref{fig:chatflow}, follows the corrective and
+multi-agent ideas from Chapter~2. A question is first analysed and, where useful,
+rewritten and expanded so that retrieval has the best chance of finding the right
+passages. Retrieval is hybrid: a vector search finds passages by meaning and a
+keyword search finds them by exact terms, and the two ranked lists are fused. The
+fused candidates are re-ranked by a cross-encoder, and the top passages are graded
+for relevance and sufficiency. Only if the evidence is sufficient does the system
+compose an answer, attaching a citation to each claim; otherwise it abstains and
+says the library cannot support an answer.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.62\textwidth]{fig_chat_flow.png}
+  \caption{Design of the grounded chat. The question is analysed, evidence is
+  retrieved by both meaning and keyword and then re-ranked, and the evidence is
+  graded before any answer is written. A sufficient set of passages leads to a
+  cited answer; an insufficient set leads the system to abstain rather than guess.
+  This grade-then-answer order is what keeps the replies honest.}
+  \label{fig:chatflow}
+\end{figure}
+
+This design directly serves the honesty requirement. Because the decision to
+answer is made after the evidence has been graded, the system can decline cleanly,
+and because each claim is tied to a passage, a reader can verify the answer
+against the source.
+
+\section{The Agent Subsystem}
+
+The agent turns a goal and a set of libraries into an artefact such as a chart, a
+document or an image. Its design is shown in Figure~\ref{fig:agentflow}. The agent
+first plans the work, deciding what the user wants and what data is required. If
+the request is genuinely ambiguous it asks a single clarifying question;
+otherwise it proceeds and records the assumptions it has made. It then acquires
+the data, either by re-parsing a structured file exactly or by retrieving from the
+library, builds a specification of the artefact, validates and if necessary
+repairs it, renders it both interactively and as a downloadable file, and finally
+explains the result.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{fig_agent_flow.png}
+  \caption{Design of the agent. A goal is planned into data needs and artefacts;
+  the agent clarifies only when the request is ambiguous, acquires the data,
+  builds and validates a specification, and renders the artefact for viewing and
+  download. The data values are bound to a chart in code rather than written by
+  the model, so the figures always match the source document.}
+  \label{fig:agentflow}
+\end{figure}
+
+The key design decision here is the separation between describing an artefact and
+filling it with data. The model proposes the shape of a chart, but the numbers are
+bound to it from the source file in code. This keeps the artefacts faithful, which
+is essential if a user is to rely on them.
+
+\section{The Knowledge-Graph Subsystem}
+
+The knowledge-graph subsystem reveals how the ideas in a library relate. Its
+construction is shown in Figure~\ref{fig:kgbuild}. Starting from the processed
+library, it extracts entities and relationships from each chunk using a language
+model, resolves duplicate entities so that the same thing mentioned in different
+ways becomes a single node, builds the graph by assembling the nodes and edges and
+weighting them, and serves the result as an interactive graph in the web
+application. Every node and edge keeps a link back to the passage it came from, so
+the graph is not only a picture but also a way back into the evidence.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{fig_kg_build.png}
+  \caption{Design of the knowledge-graph subsystem. Entities and relationships are
+  extracted from each chunk, duplicate entities are resolved into single nodes, the
+  graph is assembled and weighted, and it is served interactively. Provenance is
+  kept throughout, so a user can move from a node or edge back to the source
+  passage that supports it.}
+  \label{fig:kgbuild}
+\end{figure}
+
+\section{Data Model}
+
+The data model, shown in Figure~\ref{fig:datamodel}, ties the subsystems together.
+At its centre is the organisation, which is the tenant boundary; users belong to an
+organisation, and libraries are owned by it. A library contains documents, and each
+document is split into chunks that carry both their text and their embedding, which
+is what retrieval searches. Conversations and their messages, and the nodes and
+edges of the knowledge graph, are likewise attached to the organisation. Every row
+is scoped to an organisation, and access is enforced by row-level security in the
+database, which is how tenant isolation is guaranteed.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{fig_data_model.png}
+  \caption{Simplified core data model. The organisation is the tenant boundary;
+  users, libraries, documents, chunks, conversations and graph elements all belong
+  to it. Chunks carry the embeddings that retrieval searches, and the graph
+  elements are grounded in the same chunks, so the data model supports both
+  answering and mapping from one consistent structure.}
+  \label{fig:datamodel}
+\end{figure}
+
+\section{Deployment Architecture}
+
+Figure~\ref{fig:deployment} shows how the parts are deployed. The web application
+is served from a Cloudflare Worker, with files and artefacts in an R2 bucket and
+live updates delivered over a realtime channel. The heavy processing runs on a
+single GPU-equipped virtual machine that hosts the FastAPI service, the pipeline
+workers and the local embedding and reranking models. The database, with its
+vector search, is a managed Supabase instance, and the language and vision models
+are reached over the network. This arrangement keeps the user-facing parts fast
+and close to the user while concentrating the graphics-intensive work on one
+server.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{fig_deployment.png}
+  \caption{Deployment view. The application and its object store run on Cloudflare
+  at the edge, while document processing, retrieval and the local models run on a
+  single GPU virtual machine. The managed database provides vector search, and the
+  external model services are called over the network. The split keeps the
+  interface responsive and the processing in one place.}
+  \label{fig:deployment}
+\end{figure}
+
+\section{Summary}
+
+This chapter presented the architecture of Synapse and the principles of
+grounding, separation of concerns, resumable processing and tenant isolation that
+shaped it. It described the design of the grounded chat, which grades evidence
+before answering and abstains when it is insufficient; the agent, which builds
+faithful artefacts by binding data in code; and the knowledge graph, which keeps
+provenance back to the source. It then presented the data model and the deployment
+arrangement. The next chapter explains how this design was implemented.

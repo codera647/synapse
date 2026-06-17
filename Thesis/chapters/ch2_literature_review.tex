@@ -1,0 +1,189 @@
+\chapter{Literature Review}
+\label{ch:literature}
+
+\section{Introduction}
+
+This chapter reviews the research and systems that Synapse builds upon. It begins
+with retrieval-augmented generation, which is the foundation of the grounded
+chat, and then looks at the refinements that make retrieval more reliable, such
+as self-correction and multi-agent reasoning. It then covers agents that produce
+artefacts, knowledge graphs that reveal the structure of a corpus, and the
+techniques needed to read documents that are scanned or visually rich. Finally,
+it surveys how such systems are evaluated, compares the most relevant systems in
+a single table, and identifies the gap that this project fills.
+
+\section{Retrieval-Augmented Generation}
+
+Large language models store a great deal of general knowledge in their
+parameters, but that knowledge is fixed at training time and cannot include a
+user's private documents. Retrieval-augmented generation, introduced by Lewis et
+al.\ \cite{lewis2020rag}, addresses this by attaching a retrieval step to the
+model. When a question arrives, the system first finds passages relevant to it
+from a trusted collection, and then conditions the model's answer on those
+passages. This grounds the answer in real material, allows the source of each
+statement to be shown, and lets the knowledge base be updated without retraining
+the model.
+
+The quality of the retrieval step is therefore central. Early systems relied on
+sparse keyword matching, which is precise for rare terms but misses paraphrases.
+Dense passage retrieval \cite{karpukhin2020dpr} instead encodes the question and
+the passages as vectors and matches them by meaning, which captures paraphrases
+but can drift on exact terms such as names and codes. In practice the two are
+complementary, and modern systems combine them. Reciprocal rank fusion
+\cite{cormack2009rrf} is a simple and robust way to merge several ranked lists
+into one, and is used in Synapse to fuse keyword and vector results. General
+purpose text embeddings such as the BGE family \cite{xiao2024cpack} provide the
+dense representations, and a cross-encoder reranker re-orders the fused
+candidates so that the passages the model finally sees are the most relevant.
+
+\section{Making Retrieval Reliable}
+
+Retrieving relevant passages is necessary but not sufficient. The retrieved
+material may still be off-topic, contradictory or simply insufficient, and a
+model that answers regardless will produce confident but unsupported text. Two
+lines of work address this directly.
+
+Self-RAG \cite{asai2024selfrag} teaches a model to decide when to retrieve, to
+criticise its own draft against the retrieved evidence, and to prefer answers
+that are well supported. Corrective RAG \cite{yan2024crag} adds a lightweight
+evaluator that grades the retrieved set and, when it is weak, triggers a
+corrective action such as refining the query or searching more widely before the
+answer is composed. Both share a principle that this project adopts: the system
+should judge its own evidence and change its behaviour, including declining to
+answer, rather than always producing a reply.
+
+A complementary direction breaks the work across several cooperating agents.
+MA-RAG \cite{nguyen2025marag} assigns sub-tasks such as planning, retrieval and
+synthesis to specialised agents that reason step by step, which helps with
+questions that require several pieces of evidence to be combined. Insight-RAG
+\cite{pezeshkpour2025insightrag} argues that retrieving on surface similarity
+alone can miss the deeper point of a question, and retrieves on the underlying
+information need instead. The grounded chat in Synapse follows this overall
+shape: it analyses the question, retrieves and grades evidence, and only then
+composes a cited answer or abstains.
+
+\section{Agents that Produce Artefacts}
+
+Beyond answering questions, recent agents carry out multi-step tasks. The ReAct
+framework \cite{yao2023react} interleaves reasoning and acting, letting a model
+think about what to do, take an action, observe the result, and continue. Chain
+of thought prompting \cite{wei2022cot} showed that encouraging a model to reason
+in explicit steps improves its performance on complex tasks. These ideas underpin
+the agent mode in Synapse, which plans its work, decides what data it needs, and
+produces an artefact such as a chart or a document.
+
+A practical concern for any agent that reports numbers is faithfulness. If a
+model is allowed to write the values inside a chart, it may produce plausible but
+incorrect figures. Synapse avoids this by having the agent describe the chart it
+wants while the actual data values are bound to it in code from the source file,
+so the numbers in an artefact always match the document they came from.
+
+\section{Knowledge Graphs over Documents}
+
+A knowledge graph represents a collection as entities and the relationships
+between them, which makes the structure of the collection visible and supports
+questions that span several documents. GraphRAG \cite{edge2024graphrag} builds
+such a graph from a corpus and uses it to answer broad, summarising questions
+that plain passage retrieval handles poorly. CuriousLLM \cite{yang2024curiousllm}
+combines graph reasoning with a questioning strategy to improve multi-document
+question answering. Synapse includes a knowledge-graph module in the same spirit:
+it extracts entities and relationships from a processed library, resolves
+duplicates, and presents the result as an interactive graph that keeps a link
+from every node and edge back to the passage it came from.
+
+\section{Reading Scanned and Visually Rich Documents}
+
+Real collections are not limited to clean digital text. They include scanned
+pages, spreadsheets, slides, figures and tables, and a system that ignores these
+will miss much of the content. Document layout analysis locates the regions of a
+page, such as paragraphs, tables and figures; DocLayout-YOLO \cite{zhao2024doclayout}
+is a recent and efficient model for this task. Optical character recognition then
+reads the text inside scanned regions, and modern toolkits such as Surya
+\cite{surya2024} handle many languages and layouts. For pages where text alone is
+not enough, vision-language models such as Qwen2.5-VL \cite{bai2025qwen25vl} can
+read a page image directly and describe its figures and tables. VisDoM
+\cite{suri2024visdom} shows the value of treating visually rich elements as
+first-class evidence in multi-document question answering. Synapse uses layout
+detection, optical character recognition and a vision-language model together so
+that scanned and structured documents are processed, not skipped.
+
+\section{Evaluating Document Intelligence}
+
+Measuring these systems is difficult because both retrieval and generation must
+be judged, and because a fluent answer is not necessarily a correct one.
+Frameworks such as RAGAS \cite{es2024ragas} score properties like faithfulness
+and relevance without requiring a hand-written reference for every question.
+Because grading free-form answers at scale is costly, a capable model is often
+used as an automatic judge \cite{zheng2023judge}, and using more than one judge
+helps to expose disagreement. The DOUBLE-BENCH benchmark \cite{shen2025doublebench}
+was created specifically to assess document retrieval-augmented generation over
+realistic, multimodal documents, with questions that require one or several hops
+of reasoning. This project evaluates Synapse on DOUBLE-BENCH together with
+purpose-built structured datasets, and reports not only accuracy but also how
+often the system is wrongly confident, which is discussed in Chapter~7.
+
+\section{Comparison with Existing Systems}
+
+Table~\ref{tab:comparison} compares Synapse with representative systems across
+the capabilities that matter for this project. Most prior systems are strong in
+one area, such as corrective retrieval or graph reasoning, but few bring grounded
+question answering, artefact generation, knowledge mapping and support for
+scanned documents together in a single product that a team can use.
+
+\begin{table}[H]
+  \centering
+  \caption{Comparison of Synapse with representative related systems. A tick
+  means the capability is a designed feature of the system; a dash means it is
+  not a focus of that work. Synapse is distinguished by combining grounded,
+  abstaining question answering with artefact generation, knowledge mapping and
+  support for scanned and structured documents in one platform.}
+  \label{tab:comparison}
+  \small
+  \begin{tabularx}{\textwidth}{Lcccccc}
+    \toprule
+    \textbf{System} & \textbf{Grounded} & \textbf{Abstains} & \textbf{Multi-} &
+    \textbf{Artefact} & \textbf{Knowledge} & \textbf{Scanned/} \\
+     & \textbf{QA} & \textbf{when unsure} & \textbf{agent} & \textbf{generation} &
+    \textbf{graph} & \textbf{structured} \\
+    \midrule
+    Classic RAG \cite{lewis2020rag}        & \checkmark & --         & --         & -- & -- & -- \\
+    Self-RAG \cite{asai2024selfrag}        & \checkmark & \checkmark & --         & -- & -- & -- \\
+    Corrective RAG \cite{yan2024crag}      & \checkmark & \checkmark & --         & -- & -- & -- \\
+    MA-RAG \cite{nguyen2025marag}          & \checkmark & \checkmark & \checkmark & -- & -- & -- \\
+    GraphRAG \cite{edge2024graphrag}       & \checkmark & --         & --         & -- & \checkmark & -- \\
+    VisDoM \cite{suri2024visdom}           & \checkmark & --         & --         & -- & -- & \checkmark \\
+    \textbf{Synapse (this work)}           & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{Research Gap}
+
+The review shows steady progress on the individual pieces of document
+intelligence, but a gap in how they are brought together. Retrieval has become
+more reliable through self-correction and multi-agent reasoning, graphs have made
+the structure of a corpus visible, and vision-language models have made scanned
+and visually rich pages readable. These advances, however, are usually studied in
+isolation and demonstrated on clean benchmarks rather than delivered as a single
+product. A user with a real, mixed collection of documents still has no one place
+where they can process that collection reliably, ask it questions and receive
+honest cited answers, turn it into charts and documents, and explore how its
+ideas connect, all while sharing the work with a team.
+
+Synapse addresses this gap. It combines a pipeline that handles scanned and
+structured documents, a corrective and multi-agent grounded chat that abstains
+when the evidence is insufficient, an agent that produces faithful artefacts, and
+an interactive knowledge graph, within one multi-tenant web platform. The
+chapters that follow describe its requirements, design, implementation and
+evaluation.
+
+\section{Summary}
+
+This chapter reviewed the foundations of the project. It traced retrieval-augmented
+generation from its origins to the corrective and multi-agent methods that make
+it reliable, surveyed agents that produce artefacts, knowledge graphs over
+documents, and the techniques for reading scanned and structured pages, and
+looked at how such systems are evaluated. A comparison with representative
+systems showed that each addresses part of the problem, and the gap analysis
+identified the combined, product-level capability that Synapse provides. The next
+chapter sets out the requirements of the system.

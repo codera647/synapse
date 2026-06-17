@@ -1,0 +1,82 @@
+\chapter{Conclusion and Future Work}
+\label{ch:conclusion}
+
+\section{Introduction}
+
+This final chapter draws the thesis to a close. It revisits the objectives set in
+Chapter~1 and judges how far each was met, summarises the main findings, sets out
+the limitations of the work honestly, and proposes directions for future
+development. It ends with a few concluding remarks.
+
+\section{Summary of the Work}
+
+This project set out to design and build a practical platform that lets a user
+understand, question, visualise and map a private collection of documents through
+one web application. That aim has been met. The platform, Synapse, ingests a mixed
+collection of documents through a resumable pipeline that handles born-digital,
+scanned and structured files; answers questions through a corrective, multi-agent
+chat that grounds every claim in a citation and abstains when the evidence is
+insufficient; generates faithful artefacts through an agent that binds data in
+code; maps a library as an interactive knowledge graph; and supports teams who
+share libraries and collaborate in real time.
+
+Each of the objectives from Chapter~1 was achieved. The ingestion pipeline
+processes mixed documents reliably (Objective~1, Chapter~5). The grounded chat
+answers from the user's library, cites its sources and abstains when it should
+(Objective~2, Chapters~4 and~7). The agent plans its work, clarifies only when
+necessary, and produces charts, documents and images (Objective~3, Chapters~4
+and~6). The knowledge-graph module extracts and displays the entities and
+relationships of a library (Objective~4, Chapters~4 and~6). Teams share libraries
+and chat in real time (Objective~5, Chapter~6). Finally, the platform was
+evaluated on an established benchmark and on purpose-built datasets, and its
+accuracy, honesty and efficiency were reported (Objective~6, Chapter~7).
+
+\section{Key Findings}
+
+Three findings stand out. First, a disciplined pipeline that combines layout
+detection, optical character recognition and a vision-language model can process
+scanned and structured documents well enough that retrieval over them is strong,
+with only a small gap from born-digital documents. Second, grading evidence before
+answering, and allowing the system to abstain, measurably improves honesty: the
+abstention mechanism roughly halved the rate of confident mistakes, while
+citations remained reliable. Third, keeping the language model's role to describing
+artefacts, and binding data to them in code, produces charts and documents whose
+figures are faithful to the source, which is what makes the agent useful in
+practice.
+
+\section{Limitations}
+
+The work has several limitations, which are stated plainly. The hardest questions,
+those that require evidence to be combined across several documents, remain the
+weakest area, as they are for current systems generally. Answering structured
+documents occasionally fails on questions that require aggregating across many
+rows, where exact computation would help. A full, deep answer can take longer than
+a user might like on the most demanding questions, because the careful reasoning
+that makes answers reliable takes time. The platform depends on external model
+services, so its behaviour is tied to theirs, and the graphics-intensive processing
+runs on a single server, which bounds how much work can be in progress at once.
+
+\section{Future Work}
+
+These limitations suggest clear directions for future work. Multi-hop reasoning
+could be strengthened by iterating retrieval more deliberately, gathering evidence
+across several rounds before answering. The handling of structured documents could
+be improved by letting the agent compute aggregates exactly over a spreadsheet
+rather than relying on retrieval alone. Latency on the hardest questions could be
+reduced by caching intermediate results and by running independent reasoning steps
+in parallel. The knowledge graph could be used more actively during answering, so
+that questions which span a whole corpus draw on its structure. Finally, the
+processing tier could be distributed across more than one server to support larger
+collections and more concurrent users.
+
+\section{Concluding Remarks}
+
+This thesis has shown that the separate advances in retrieval-augmented generation,
+agents, knowledge graphs and document understanding can be brought together into a
+single, practical product. Synapse demonstrates that a careful pipeline paired with
+a corrective, multi-agent design can deliver trustworthy document intelligence over
+a user's own private collection: answers that are grounded and checkable, a system
+that knows when to decline, artefacts that are faithful to their sources, and a map
+of how a collection's ideas connect. The result is a platform that turns a static
+pile of documents into something a person, or a team, can genuinely understand,
+question, visualise and explore.

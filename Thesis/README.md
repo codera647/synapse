@@ -10,8 +10,10 @@ set the compiler to **pdfLaTeX**, and compile `main.tex`.
   abstract.
 - `chapters/` — the 8 chapters + abbreviations/glossary.
 - `figures/` — product screenshots, the institute logo, and the generated diagrams (`fig_*.png`).
-- `diagrams/` — the matplotlib scripts that render the diagrams. Re-run to regenerate:
-  `cd diagrams && python d01_architecture.py` (needs `matplotlib`).
+- `diagrams/` — the diagram scripts. Each describes boxes + arrows on a pixel canvas
+  (`html_dsl.py`), renders to clean HTML/CSS, and screenshots it to a crisp 2x PNG with
+  headless Chrome (the same way the reference theses were drawn). Re-run to regenerate:
+  `cd diagrams && python d01_architecture.py` (needs Google Chrome or Microsoft Edge installed).
 - `references.bib` — IEEE bibliography.
 
 ## Notes

@@ -1,38 +1,46 @@
-"""Figure: high-level system architecture of Synapse."""
-from dsl import canvas, box, group, arrow, save
+"""Figure: high-level system architecture of Synapse (HTML/CSS render)."""
+from html_dsl import Diagram
 
-fig, ax = canvas(12.5, 7.4)
+d = Diagram(1180, 720, "System Architecture of Synapse")
 
-# Client
-client = box(ax, 14, 80, 22, 12, "Web Application\n(Next.js / React)\nbrowser", "blue", bold=True)
+# --- client tier ---
+client = d.box(150, 110, 210, 78, "Web Application",
+               "Next.js / React, runs in the browser", "navy")
 
-# Edge / frontend host
-edge = box(ax, 14, 55, 22, 10, "Cloudflare Worker\n(OpenNext host +\nAPI proxy)", "slate")
+# --- edge tier ---
+edge = d.box(150, 320, 210, 84, "Cloudflare Worker",
+             "OpenNext host + API proxy (edge)", "slate")
 
-# Backend group
-group(ax, 60, 55, 54, 64, "GPU Application Server (FastAPI, L4)", "slate")
-api = box(ax, 44, 80, 20, 10, "API layer\n(chat, agent, kg,\npipeline)", "teal", bold=True)
-workers = box(ax, 44, 58, 20, 12, "Worker pool\nsync . layout . OCR/VLM\nchunk . embed . cluster", "teal")
-retr = box(ax, 44, 34, 20, 10, "Retrieval +\nagent reasoning\n(CRAG, multi-agent)", "teal")
-kg = box(ax, 78, 34, 20, 10, "Knowledge-graph\nbuilder", "violet")
-embed = box(ax, 78, 58, 20, 10, "Embedding +\nrerank models\n(BGE)", "violet")
+# --- backend group ---
+d.group(720, 360, 760, 560, "GPU Application Server  —  FastAPI on an NVIDIA L4")
+api = d.box(470, 130, 200, 80, "API Layer",
+            "chat, agent, graph, pipeline routes", "blue")
+workers = d.box(470, 300, 200, 92, "Worker Pool",
+                "sync · layout · OCR/VLM · chunk · embed · cluster", "teal")
+retr = d.box(470, 500, 200, 88, "Retrieval & Reasoning",
+             "corrective, multi-agent loop", "teal")
+embed = d.box(760, 300, 190, 84, "Embedding & Rerank",
+              "BGE encoder + reranker", "violet")
+kg = d.box(760, 500, 190, 84, "Knowledge-Graph Builder",
+           "entity & relation extraction", "violet")
 
-# Data + services
-sup = box(ax, 44, 12, 20, 9, "Supabase\n(Postgres + pgvector)", "amber", bold=True)
-r2 = box(ax, 78, 12, 20, 9, "Cloudflare R2\n(object storage)", "amber", bold=True)
-llm = box(ax, 92, 80, 14, 11, "LLM APIs\nOpenAI /\nOpenRouter\n(Claude)", "rose")
+# --- data + external services ---
+sup = d.box(470, 650, 200, 70, "Supabase", "Postgres + pgvector", "amber")
+r2 = d.box(760, 650, 190, 70, "Cloudflare R2", "object storage", "amber")
+llm = d.box(1050, 130, 175, 96, "Model APIs",
+            "OpenAI · OpenRouter (Claude, Qwen-VL)", "rose")
 
-# edges
-arrow(ax, client, "b", edge, "t", "HTTPS", double=True)
-arrow(ax, edge, "r", api, "l", "REST", double=True)
-arrow(ax, api, "b", workers, "t")
-arrow(ax, workers, "b", retr, "t")
-arrow(ax, retr, "r", kg, "l", dashed=True)
-arrow(ax, workers, "r", embed, "l")
-arrow(ax, retr, "b", sup, "t", "vectors+text", double=True)
-arrow(ax, kg, "b", sup, "t", double=True)
-arrow(ax, workers, "b", r2, "t", "files", double=True)
-arrow(ax, api, "r", llm, "l", double=True)
-arrow(ax, retr, "r", llm, "t", dashed=True)
+# --- edges ---
+d.arrow(client, "b", edge, "t", "HTTPS", double=True)
+d.arrow(edge, "r", api, "l", "REST", double=True)
+d.arrow(api, "b", workers, "t")
+d.arrow(workers, "b", retr, "t")
+d.arrow(workers, "r", embed, "l")
+d.arrow(retr, "r", kg, "l", dashed=True)
+d.arrow(retr, "b", sup, "t", "vectors + text", double=True)
+d.arrow(kg, "b", r2, "t", double=True, elbow="v")
+d.arrow(workers, "b", r2, "t", "files", double=True, elbow="v")
+d.arrow(api, "r", llm, "l", double=True)
+d.arrow(retr, "r", llm, "l", dashed=True, elbow="h")
 
-save(fig, "fig_architecture.png")
+d.save("fig_architecture.png")
