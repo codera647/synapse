@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  FiAlertTriangle, FiArrowUp, FiBarChart2, FiCheck, FiClock, FiFileText, FiFile, FiImage, FiPaperclip, FiPlus, FiX, FiZap,
+  FiAlertTriangle, FiArrowUp, FiBarChart2, FiBox, FiCheck, FiClock, FiFileText, FiFile, FiImage, FiPaperclip, FiPlus, FiX, FiZap,
 } from "react-icons/fi";
 import AgentArtifact, { type AgentArtifactData } from "@/components/AgentArtifact";
 import AgentArtifactsDrawer from "@/components/AgentArtifactsDrawer";
@@ -20,6 +20,8 @@ type AgentMsg = {
   content: string;
   artifacts?: AgentArtifactData[];
   questions?: Array<{ question: string; why?: string; options?: string[]; recommended?: string }>;
+  /** libraries / uploaded files this message was grounded on (shown as tags) */
+  sources?: { libraries?: string[]; files?: string[] };
 };
 
 const VISUAL_TYPES: Array<{ key: string; label: string }> = [
@@ -242,7 +244,11 @@ export default function AgentPanel({
     const text = (override ?? prompt).trim();
     if (!text || running || !organization?.id) return;
     const rid = (crypto as { randomUUID?: () => string }).randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
-    setMessages((prev) => [...prev, { id: `${rid}-u`, role: "user", content: text }]);
+    const msgSources =
+      selectedLibNames.length || uploads.length
+        ? { libraries: selectedLibNames, files: uploads.map((u) => u.filename) }
+        : undefined;
+    setMessages((prev) => [...prev, { id: `${rid}-u`, role: "user", content: text, sources: msgSources }]);
     setRunning(true);
     setRunningAction(action);
     setStatus(action === "image" ? "Generating image…" : "Starting…");
@@ -624,8 +630,35 @@ export default function AgentPanel({
 
 function MessageRow({ m, onAnswer, onType }: { m: AgentMsg; onAnswer: (ans: string) => void; onType: () => void }) {
   if (m.role === "user") {
+    const libs = m.sources?.libraries ?? [];
+    const files = m.sources?.files ?? [];
+    const hasTags = libs.length > 0 || files.length > 0;
     return (
-      <div className="flex justify-end">
+      <div className="flex flex-col items-end gap-1.5">
+        {hasTags ? (
+          <div className="flex max-w-2xl flex-wrap justify-end gap-1">
+            {libs.map((name) => (
+              <span
+                key={`lib-${name}`}
+                title={`Library: ${name}`}
+                className="inline-flex max-w-[14rem] items-center gap-1 rounded-md border border-violet-400/30 bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-medium text-violet-200"
+              >
+                <FiBox className="h-3 w-3 shrink-0" />
+                <span className="truncate">{name}</span>
+              </span>
+            ))}
+            {files.map((name) => (
+              <span
+                key={`file-${name}`}
+                title={`File: ${name}`}
+                className="inline-flex max-w-[14rem] items-center gap-1 rounded-md border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-white/70"
+              >
+                <FiPaperclip className="h-3 w-3 shrink-0 text-violet-300" />
+                <span className="truncate">{name}</span>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <div className="max-w-2xl rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-600 px-4 py-2 text-sm text-white">
           {m.content}
         </div>

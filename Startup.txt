@@ -5,3 +5,14 @@ sleep 10
 grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' ~/cf-tunnel.log | head -1
 
 source /opt/synapse/.venv/bin/activate
+
+# 1. Stop the backend service — this halts the autoscaler and all worker subprocesses
+sudo systemctl stop synapse-backend
+
+# 2. Kill any lingering pipeline/worker processes (in case some detached)
+sudo pkill -9 -f "worker_bootstrap.py"
+sudo pkill -9 -f "_worker.py"
+
+# 3. Confirm nothing is left and the GPU is freed
+ps -ef | grep -E "[_]worker.py|worker_bootstrap"
+nvidia-smi
