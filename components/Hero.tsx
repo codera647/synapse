@@ -53,7 +53,7 @@ export default function Hero() {
                         </Reveal>
 
                         <Reveal delay={320}>
-                            <div className="mt-10 flex items-center lg:justify-start justify-center gap-7 text-sm text-white/50">
+                            <div className="mt-10 flex flex-wrap items-center lg:justify-start justify-center gap-x-5 gap-y-2 sm:gap-7 text-sm text-white/50">
                                 <span className="flex items-center gap-2"><FiFileText className="text-violet-400" /> Layout-aware ingestion</span>
                                 <span className="flex items-center gap-2"><FiSearch className="text-fuchsia-400" /> Hybrid retrieval</span>
                                 <span className="hidden sm:flex items-center gap-2"><FiZap className="text-blue-400" /> Cited answers</span>

@@ -62,7 +62,7 @@ export default function TechStack() {
 
                     <Reveal delay={120}>
                         <div
-                            className="grid grid-cols-5 gap-3 sm:gap-4"
+                            className="grid grid-cols-3 sm:grid-cols-5 gap-2.5 sm:gap-4"
                             onMouseLeave={() => setActiveId("next")}
                         >
                             {techs.map((tech) => {

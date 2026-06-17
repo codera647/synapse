@@ -145,7 +145,7 @@ export default function Navbar() {
                                 </button>
 
                                 {menuOpen && (
-                                    <div className="absolute right-0 mt-3 w-72 rounded-2xl surface-menu overflow-hidden z-[60] origin-top-right">
+                                    <div className="absolute right-0 mt-3 w-72 max-w-[calc(100vw-1.5rem)] rounded-2xl surface-menu overflow-hidden z-[60] origin-top-right">
                                         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-white/10">
                                             <div className="h-9 w-9 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center ring-1 ring-white/20 shrink-0">
                                                 <FiUser className="w-4 h-4 text-white" />

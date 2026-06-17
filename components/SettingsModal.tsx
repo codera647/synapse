@@ -363,13 +363,13 @@ export default function SettingsModal({
           </div>
 
           {/* Mobile tabs */}
-          <div className="flex gap-1 border-b border-white/10 px-3 py-2 sm:hidden">
+          <div className="flex gap-1 overflow-x-auto synapse-scroll border-b border-white/10 px-3 py-2 sm:hidden">
             {navItems.map((n) => (
               <button
                 key={n.key}
                 type="button"
                 onClick={() => setTab(n.key)}
-                className={`rounded-lg px-3 py-1.5 text-xs ${tab === n.key ? "bg-white/8 text-white" : "text-white/55"}`}
+                className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs ${tab === n.key ? "bg-white/8 text-white" : "text-white/55"}`}
               >
                 {n.label}
               </button>
@@ -490,7 +490,7 @@ export default function SettingsModal({
                 <div className="space-y-4">
                   <div className="text-xs uppercase tracking-wide text-white/35">Characteristics</div>
                   {CHARACTERISTICS.map((c) => (
-                    <div key={c.key} className="flex items-center justify-between gap-4">
+                    <div key={c.key} className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                       <div className="min-w-0">
                         <div className="text-sm text-white/85">{c.label}</div>
                         <div className="text-[11px] text-white/40">{c.hint}</div>

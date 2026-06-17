@@ -13,6 +13,7 @@ import {
     FiLogOut,
     FiZap,
     FiSettings,
+    FiMenu,
 } from "react-icons/fi";
 
 interface DashboardNavbarProps {
@@ -22,6 +23,7 @@ interface DashboardNavbarProps {
     onSelectOrg?: (orgId: string) => void;
     onOpenHardware?: () => void;
     onOpenSettings?: () => void;
+    onOpenMobileNav?: () => void;
     avatarUrl?: string | null;
     userEmail?: string | null;
     onLogout?: () => void;
@@ -34,6 +36,7 @@ export default function DashboardNavbar({
     onSelectOrg,
     onOpenHardware,
     onOpenSettings,
+    onOpenMobileNav,
     avatarUrl = null,
     userEmail,
     onLogout,
@@ -72,9 +75,17 @@ export default function DashboardNavbar({
     return (
         <header className="w-full surface-app border-b border-white/10 flex items-center justify-between px-4 sm:px-6 h-14 relative z-30 backdrop-blur-xl">
             {/* LEFT — Logo + Org selector */}
-            <div className="flex items-center gap-3 relative" ref={orgMenuRef}>
-                <div className="flex items-center gap-2.5">
-                    <Image src="/logo.png" alt="Synapse" width={32} height={32} className="h-8 w-8" />
+            <div className="flex items-center gap-2 sm:gap-3 relative min-w-0" ref={orgMenuRef}>
+                {/* Mobile hamburger */}
+                <button
+                    onClick={onOpenMobileNav}
+                    className="md:hidden grid place-items-center h-9 w-9 -ml-1 rounded-lg text-white/70 hover:text-white hover:bg-white/8 transition-colors shrink-0"
+                    aria-label="Open menu"
+                >
+                    <FiMenu className="w-5 h-5" />
+                </button>
+                <div className="flex items-center gap-2.5 min-w-0">
+                    <Image src="/logo.png" alt="Synapse" width={32} height={32} className="h-8 w-8 shrink-0" />
                     <span className="hidden sm:block text-white/25 text-lg font-light">/</span>
 
                     <button
@@ -84,17 +95,17 @@ export default function DashboardNavbar({
                         }}
                         className="flex items-center gap-1.5 text-sm text-white/90 hover:bg-white/8 px-2.5 py-1.5 rounded-lg transition-all group"
                     >
-                        <span className="font-medium max-w-[10rem] truncate">{displayName}</span>
+                        <span className="font-medium max-w-[7rem] sm:max-w-[10rem] truncate">{displayName}</span>
                         <FiChevronDown className={`w-3.5 h-3.5 text-white/40 group-hover:text-white/70 transition-transform ${openOrgMenu ? "rotate-180" : ""}`} />
                     </button>
                 </div>
 
-                <span className="text-[10px] font-semibold px-2 py-[3px] rounded-full bg-violet-500/15 text-violet-300 border border-violet-400/20">
+                <span className="hidden sm:inline-block text-[10px] font-semibold px-2 py-[3px] rounded-full bg-violet-500/15 text-violet-300 border border-violet-400/20">
                     FREE
                 </span>
 
                 {openOrgMenu && (
-                    <div className="absolute top-12 left-0 w-72 rounded-2xl surface-menu overflow-hidden z-[60]">
+                    <div className="absolute top-12 left-0 w-72 max-w-[calc(100vw-2rem)] rounded-2xl surface-menu overflow-hidden z-[60]">
                         <div className="px-3 pt-2.5 pb-1 text-[10px] uppercase tracking-wide text-white/35">
                             Organizations & teams
                         </div>
@@ -138,10 +149,10 @@ export default function DashboardNavbar({
 
             {/* RIGHT — PROFILE */}
             <div className="flex items-center gap-1.5 sm:gap-2 relative" ref={profileMenuRef}>
-                <button className="grid place-items-center h-9 w-9 rounded-lg text-white/50 hover:text-white hover:bg-white/8 transition-colors">
+                <button className="hidden sm:grid place-items-center h-9 w-9 rounded-lg text-white/50 hover:text-white hover:bg-white/8 transition-colors">
                     <FiHelpCircle className="w-4 h-4" />
                 </button>
-                <button className="grid place-items-center h-9 w-9 rounded-lg text-white/50 hover:text-white hover:bg-white/8 transition-colors">
+                <button className="hidden sm:grid place-items-center h-9 w-9 rounded-lg text-white/50 hover:text-white hover:bg-white/8 transition-colors">
                     <FiBell className="w-4 h-4" />
                 </button>
 
@@ -163,7 +174,7 @@ export default function DashboardNavbar({
                 </button>
 
                 {openProfileMenu && (
-                    <div className="absolute right-0 top-12 w-72 rounded-2xl surface-menu overflow-hidden z-[60]">
+                    <div className="absolute right-0 top-12 w-72 max-w-[calc(100vw-1.5rem)] rounded-2xl surface-menu overflow-hidden z-[60]">
                         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-white/10">
                             <div className="h-9 w-9 overflow-hidden rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center ring-1 ring-white/20 shrink-0">
                                 {avatarUrl ? (

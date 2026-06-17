@@ -375,7 +375,7 @@ export default function AgentPanel({
               : `${selectedLibs.length} librar${selectedLibs.length === 1 ? "y" : "ies"}`}
           </button>
           {libMenuOpen ? (
-            <div className="surface-menu absolute left-0 top-11 z-30 max-h-72 w-72 overflow-auto rounded-xl p-1.5 shadow-2xl shadow-black/50">
+            <div className="surface-menu absolute left-0 top-11 z-30 max-h-72 w-72 max-w-[calc(100vw-1.5rem)] overflow-auto rounded-xl p-1.5 shadow-2xl shadow-black/50">
               <div className="px-2 py-1 text-[9px] uppercase tracking-wide text-white/35">Your processed libraries</div>
               {libraries.length === 0 ? (
                 <div className="px-2.5 py-2 text-xs text-white/40">No processed libraries yet.</div>
@@ -431,7 +431,7 @@ export default function AgentPanel({
               <FiClock className="h-4 w-4" />
             </button>
             {historyOpen ? (
-              <div className="surface-menu absolute right-0 top-11 z-30 max-h-80 w-72 overflow-auto rounded-xl p-1.5 shadow-2xl shadow-black/50">
+              <div className="surface-menu absolute right-0 top-11 z-30 max-h-80 w-72 max-w-[calc(100vw-1.5rem)] overflow-auto rounded-xl p-1.5 shadow-2xl shadow-black/50">
                 <div className="px-2 py-1 text-[9px] uppercase tracking-wide text-white/35">Recent runs</div>
                 {runs.length === 0 ? (
                   <div className="px-2.5 py-2 text-xs text-white/40">No past runs.</div>

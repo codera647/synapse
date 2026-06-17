@@ -195,7 +195,7 @@ export default function LibraryDrawer({ open, onClose, library, organizationId, 
           boxShadow: "-20px 0 80px rgba(0,0,0,0.35)",
         }}
       >
-        <div className="h-full overflow-auto px-5 pb-6 pt-5">
+        <div className="h-full overflow-auto px-4 sm:px-5 pb-6 pt-5">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <div className="text-[11px] uppercase tracking-[0.22em] text-gray-500">Library</div>

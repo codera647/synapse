@@ -202,7 +202,7 @@ export default function LogPanel({ open, onClose, logs, libraries, onClear, defa
   return (
     <div
       ref={panelRef}
-      className="fixed bottom-0 left-16 right-0 z-50"
+      className="fixed bottom-0 left-0 md:left-16 right-0 z-50"
       style={{ height }}
     >
       <div

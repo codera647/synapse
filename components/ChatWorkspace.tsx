@@ -309,7 +309,7 @@ export default function ChatWorkspace({
               <FiChevronDown className={`h-3.5 w-3.5 text-white/40 transition-transform ${teamMenuOpen ? "rotate-180" : ""}`} />
             </button>
             {teamMenuOpen ? (
-              <div className="surface-menu absolute left-0 top-11 z-30 w-60 rounded-xl p-1.5 shadow-2xl shadow-black/50">
+              <div className="surface-menu absolute left-0 top-11 z-30 w-60 max-w-[calc(100vw-1.5rem)] rounded-xl p-1.5 shadow-2xl shadow-black/50">
                 <div className="px-2 py-1 text-[9px] uppercase tracking-wide text-white/35">Your teams</div>
                 {teams.map((t) => (
                   <button

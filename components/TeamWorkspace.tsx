@@ -459,7 +459,7 @@ export default function TeamWorkspace({
               ) : null}
             </button>
             {teamMenuOpen && teams.length > 1 ? (
-              <div className="surface-menu absolute left-0 top-10 z-30 w-60 rounded-xl p-1.5 shadow-2xl shadow-black/50">
+              <div className="surface-menu absolute left-0 top-10 z-30 w-60 max-w-[calc(100vw-1.5rem)] rounded-xl p-1.5 shadow-2xl shadow-black/50">
                 <div className="px-2 py-1 text-[9px] uppercase tracking-wide text-white/35">Your teams</div>
                 {teams.map((t) => (
                   <button
@@ -507,7 +507,7 @@ export default function TeamWorkspace({
           </h2>
           <div className="space-y-2">
             {myInvites.map((inv) => (
-              <div key={inv.id} className="flex items-center justify-between gap-3 rounded-xl bg-black/20 px-3 py-2.5">
+              <div key={inv.id} className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3 rounded-xl bg-black/20 px-3 py-2.5">
                 <div className="min-w-0 text-sm">
                   You&apos;ve been invited to join <span className="font-semibold text-white">{inv.orgName}</span>.
                 </div>

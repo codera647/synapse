@@ -69,6 +69,7 @@ function DashboardPageInner() {
     const searchParams = useSearchParams();
     const supabase = createSupabaseBrowserClient();
     const { addLog, isOpen: consoleOpen, toggle: toggleConsole, clear: clearLogs, logs } = useLog();
+    const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const stageStateRef = useRef<Map<string, Map<string, string>>>(new Map());
     // Highest progress shown per library during the current run, so the bar never goes backwards
     // (e.g. embedding ~done, then the clustering stage appearing would otherwise drop the %). Reset
@@ -1144,15 +1145,16 @@ function DashboardPageInner() {
                     onSelectOrg={handleSelectOrg}
                     onOpenHardware={() => setHardwareOpen(true)}
                     onOpenSettings={() => setSettingsOpen(true)}
+                    onOpenMobileNav={() => setMobileNavOpen(true)}
                     avatarUrl={avatarUrl}
                     userEmail={userEmail}
                     onLogout={handleLogout}
                 />
 
                     <div className="flex flex-1">
-                    <DashboardSidebar onToggleConsole={toggleConsole} consoleOpen={consoleOpen} />
+                    <DashboardSidebar onToggleConsole={toggleConsole} consoleOpen={consoleOpen} mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
 
-                    <div className="flex-1 flex items-center justify-center ml-16">
+                    <div className="flex-1 flex items-center justify-center md:ml-16">
                         <div className="text-center">
                             <button
                                 onClick={() => router.push("/new-organization")}
@@ -1186,6 +1188,7 @@ function DashboardPageInner() {
                     onSelectOrg={handleSelectOrg}
                     onOpenHardware={() => setHardwareOpen(true)}
                     onOpenSettings={() => setSettingsOpen(true)}
+                    onOpenMobileNav={() => setMobileNavOpen(true)}
                     avatarUrl={avatarUrl}
                     userEmail={userEmail}
                     onLogout={handleLogout}
@@ -1193,10 +1196,10 @@ function DashboardPageInner() {
 
                     <div className="flex flex-1">
                     {/* Sidebar on the left */}
-                    <DashboardSidebar onToggleConsole={toggleConsole} consoleOpen={consoleOpen} />
+                    <DashboardSidebar onToggleConsole={toggleConsole} consoleOpen={consoleOpen} mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
 
                     {/* Centered loading text in main area */}
-                    <div className="flex-1 flex items-center justify-center text-gray-400 text-sm ml-16">
+                    <div className="flex-1 flex items-center justify-center text-gray-400 text-sm md:ml-16">
                         <Loader />
                     </div>
                 </div>
@@ -1223,13 +1226,13 @@ function DashboardPageInner() {
 
             <div className="flex flex-1">
                 {/* Sidebar on the left */}
-                <DashboardSidebar onToggleConsole={toggleConsole} consoleOpen={consoleOpen} />
+                <DashboardSidebar onToggleConsole={toggleConsole} consoleOpen={consoleOpen} mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
 
                 {/* Main content */}
                 <main
-                    className={`flex-1 w-full px-6 ml-16 ${activeTab === "chat" || activeTab === "agent" || activeTab === "graph" || activeTab === "usage"
-                        ? "max-w-none mx-0 pr-10 pt-3 pb-4"
-                        : "max-w-6xl mx-auto pt-8 pb-10"
+                    className={`flex-1 w-full min-w-0 px-4 sm:px-6 md:ml-16 ${activeTab === "chat" || activeTab === "agent" || activeTab === "graph" || activeTab === "usage"
+                        ? "max-w-none mx-0 sm:pr-10 pt-3 pb-4"
+                        : "max-w-6xl mx-auto pt-5 sm:pt-8 pb-10"
                         }`}
                 >
                     {activeTab === "graph" ? (
@@ -1284,9 +1287,9 @@ function DashboardPageInner() {
                     ) : (
                         <>
                             {/* Title row */}
-                            <div className="flex items-center justify-between mb-5">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-5">
                                 <div>
-                                    <h1 className="text-3xl font-bold tracking-tight">
+                                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
                                         Your <span className="gradient-text">libraries</span>
                                     </h1>
                                     <p className="mt-1 text-sm text-white/50">
@@ -1295,7 +1298,7 @@ function DashboardPageInner() {
                                 </div>
 
                                 {/* View toggle + New Library */}
-                                <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-3 shrink-0">
                                     <div className="flex items-center rounded-xl glass p-1">
                                         <button
                                             onClick={() => setView("grid")}
@@ -1382,7 +1385,7 @@ function DashboardPageInner() {
                                 return (
                                 <div
                                     key={lib.id}
-                                    className="group text-left rounded-2xl glass glass-hi hover-glow px-5 py-5 flex items-center justify-between gap-4 transition-all w-full cursor-pointer"
+                                    className="group text-left rounded-2xl glass glass-hi hover-glow px-4 sm:px-5 py-4 sm:py-5 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 transition-all w-full cursor-pointer"
                                     role="button"
                                     tabIndex={0}
                                     onClick={() => openDrawer(lib)}
@@ -1390,19 +1393,19 @@ function DashboardPageInner() {
                                         if (e.key === "Enter" || e.key === " ") openDrawer(lib);
                                     }}
                                 >
-                                    <div className="flex flex-col">
-                                        <span className="flex items-center gap-2 text-lg font-bold text-gray-100">
-                                            {renderHighlight(lib.name, debouncedSearch)}
+                                    <div className="flex flex-col min-w-0 w-full sm:w-auto">
+                                        <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-base sm:text-lg font-bold text-gray-100">
+                                            <span className="min-w-0 break-words">{renderHighlight(lib.name, debouncedSearch)}</span>
                                             <span className="text-xs font-medium text-gray-500">
                                                 {formatCreatedAt(lib.created_at)}
                                             </span>
                                         </span>
-                                        <div className="mt-2 flex items-center gap-3">
+                                        <div className="mt-2 flex flex-wrap items-center gap-3">
                                             {!["running", "queued", "processing"].includes(getPipelineStatus(lib))
                                                 ? getStatusBadge(getPipelineStatus(lib))
                                                 : null}
                                             <div className="flex items-center gap-2">
-                                                <div className="h-2 w-48 rounded-full bg-white/[0.07] overflow-hidden ring-1 ring-inset ring-white/[0.06]">
+                                                <div className="h-2 w-36 sm:w-48 rounded-full bg-white/[0.07] overflow-hidden ring-1 ring-inset ring-white/[0.06]">
                                                     <div
                                                         className={`h-full rounded-full transition-all duration-500 ${getPipelineStatus(lib) === "completed"
                                                                 ? "bg-emerald-500"
@@ -1423,7 +1426,7 @@ function DashboardPageInner() {
                                         </div>
                                     </div>
 
-                                    <div className="flex items-center h-full">
+                                    <div className="flex items-center h-full w-full sm:w-auto justify-end shrink-0">
                                         {canCancel ? (
                                             <button
                                                 type="button"

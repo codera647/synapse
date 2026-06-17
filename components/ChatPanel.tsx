@@ -282,6 +282,7 @@ export default function ChatPanel({
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [threadQuery, setThreadQuery] = useState("");
   const [historyOpen, setHistoryOpen] = useState(true);
+  const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
 
   const [threads, setThreads] = useState<Thread[]>(() => []);
@@ -1516,10 +1517,46 @@ export default function ChatPanel({
 
   const searching = threadQuery.trim().length > 0;
 
+  // Shared thread list — rendered in the desktop rail and the mobile history drawer.
+  const threadListInner = (
+    <div className="synapse-scroll flex-1 overflow-auto px-2 pb-3">
+      {threads.length === 0 ? (
+        <div className="px-3 py-6 text-sm text-white/40">No chats yet.</div>
+      ) : searching ? (
+        filteredThreads.length === 0 ? (
+          <div className="px-3 py-6 text-sm text-white/40">No matching chats.</div>
+        ) : (
+          <div className="space-y-0.5">{filteredThreads.slice(0, 120).map((t) => renderThreadRow(t))}</div>
+        )
+      ) : (
+        <div className="space-y-1.5">
+          {threadTree.slice(0, 60).map((lineage) => (
+            <div key={lineage[0].thread.id}>
+              {lineage.map((item) => renderThreadRow(item.thread, lineageRail(item.idxInLineage, item.lineageSize)))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  // Search box used in both rails.
+  const threadSearchBox = (
+    <div className="mt-3 flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2">
+      <FiSearch className="h-4 w-4 text-white/40" />
+      <input
+        value={threadQuery}
+        onChange={(e) => setThreadQuery(e.target.value)}
+        placeholder="Search chats"
+        className="w-full bg-transparent text-xs text-white/90 placeholder:text-white/40 outline-none"
+      />
+    </div>
+  );
+
   return (
     <div className="relative flex h-full overflow-hidden rounded-2xl surface-panel shadow-[0_18px_70px_rgba(0,0,0,0.35)]">
       <LimitReachedDialog info={limitInfo} planLabel={limitPlanLabel} onClose={() => setLimitInfo(null)} />
-      {/* History rail (ChatGPT-style) */}
+      {/* History rail (ChatGPT-style) — desktop inline */}
       {historyOpen ? (
         <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-white/10 bg-black/15">
           <div className="p-3">
@@ -1530,44 +1567,50 @@ export default function ChatPanel({
             >
               <FiEdit3 className="h-4 w-4" /> New chat
             </button>
-            <div className="mt-3 flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2">
-              <FiSearch className="h-4 w-4 text-white/40" />
-              <input
-                value={threadQuery}
-                onChange={(e) => setThreadQuery(e.target.value)}
-                placeholder="Search chats"
-                className="w-full bg-transparent text-xs text-white/90 placeholder:text-white/40 outline-none"
-              />
-            </div>
+            {threadSearchBox}
           </div>
-
-          <div className="synapse-scroll flex-1 overflow-auto px-2 pb-3">
-            {threads.length === 0 ? (
-              <div className="px-3 py-6 text-sm text-white/40">No chats yet.</div>
-            ) : searching ? (
-              // Flat results while searching (connectors only make sense in the full list).
-              filteredThreads.length === 0 ? (
-                <div className="px-3 py-6 text-sm text-white/40">No matching chats.</div>
-              ) : (
-                <div className="space-y-0.5">
-                  {filteredThreads.slice(0, 120).map((t) => renderThreadRow(t))}
-                </div>
-              )
-            ) : (
-              // Lineage view: each chat + its auto-spawned continuation chats, connected.
-              <div className="space-y-1.5">
-                {threadTree.slice(0, 60).map((lineage) => (
-                  <div key={lineage[0].thread.id}>
-                    {lineage.map((item) =>
-                      renderThreadRow(item.thread, lineageRail(item.idxInLineage, item.lineageSize)),
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          {threadListInner}
         </aside>
       ) : null}
+
+      {/* History — mobile slide-over */}
+      <div className={`lg:hidden fixed inset-0 z-50 ${mobileHistoryOpen ? "" : "pointer-events-none"}`}>
+        <div
+          className={`absolute inset-0 bg-black/60 backdrop-blur-[2px] transition-opacity duration-200 ${mobileHistoryOpen ? "opacity-100" : "opacity-0"}`}
+          onClick={() => setMobileHistoryOpen(false)}
+          aria-hidden
+        />
+        <aside
+          className={`absolute left-0 top-0 h-full w-72 max-w-[85vw] flex flex-col border-r border-white/10 bg-[#0d0b1a] transition-transform duration-300 ease-out ${mobileHistoryOpen ? "translate-x-0" : "-translate-x-full"}`}
+        >
+          <div className="flex items-center justify-between px-3 h-12 border-b border-white/10">
+            <span className="text-sm font-semibold text-white/80">Chats</span>
+            <button
+              onClick={() => setMobileHistoryOpen(false)}
+              className="grid place-items-center h-8 w-8 rounded-lg text-white/50 hover:text-white hover:bg-white/8"
+              aria-label="Close chats"
+            >
+              <FiX className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="p-3">
+            <button
+              type="button"
+              onClick={() => {
+                newThread();
+                setMobileHistoryOpen(false);
+              }}
+              className="btn-grad w-full inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium text-white"
+            >
+              <FiEdit3 className="h-4 w-4" /> New chat
+            </button>
+            {threadSearchBox}
+          </div>
+          <div className="flex-1 min-h-0 flex flex-col" onClickCapture={() => setMobileHistoryOpen(false)}>
+            {threadListInner}
+          </div>
+        </aside>
+      </div>
 
       {/* Main column */}
       <div className="flex flex-1 min-w-0 flex-col">
@@ -1584,11 +1627,11 @@ export default function ChatPanel({
 
           <button
             type="button"
-            onClick={newThread}
+            onClick={() => setMobileHistoryOpen(true)}
             className="lg:hidden grid place-items-center h-8 w-8 rounded-lg text-white/55 hover:text-white hover:bg-white/8 transition-colors"
-            title="New chat"
+            title="Chats"
           >
-            <FiEdit3 className="h-4 w-4" />
+            <FiMessageSquare className="h-4 w-4" />
           </button>
 
           <div className="flex items-center gap-2 min-w-0">
@@ -1973,7 +2016,7 @@ export default function ChatPanel({
                       className="fixed inset-0 z-20 cursor-default"
                       tabIndex={-1}
                     />
-                    <div className="surface-menu absolute bottom-full left-0 z-30 mb-2 w-60 rounded-xl p-1.5 shadow-2xl shadow-black/50">
+                    <div className="surface-menu absolute bottom-full left-0 z-30 mb-2 w-60 max-w-[calc(100vw-1.5rem)] rounded-xl p-1.5 shadow-2xl shadow-black/50">
                       <div className="px-2 py-1 text-[9px] uppercase tracking-wide text-white/35">Thinking depth</div>
                       {(["high", "medium", "low"] as ThinkingMode[]).map((m) => (
                         <button
