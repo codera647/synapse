@@ -66,6 +66,10 @@ function DashboardPageInner() {
     const supabase = createSupabaseBrowserClient();
     const { addLog, isOpen: consoleOpen, toggle: toggleConsole, clear: clearLogs, logs } = useLog();
     const stageStateRef = useRef<Map<string, Map<string, string>>>(new Map());
+    // Highest progress shown per library during the current run, so the bar never goes backwards
+    // (e.g. embedding ~done, then the clustering stage appearing would otherwise drop the %). Reset
+    // when a run (re)starts (queued/idle) so add-files / reprocess correctly restart the bar low.
+    const progressFloorRef = useRef<Map<string, number>>(new Map());
 
     const [userEmail, setUserEmail] = useState<string | null>(null);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -692,6 +696,26 @@ function DashboardPageInner() {
                             ? `Backend not responding — no progress for ${Math.max(1, Math.round(silentMs / 60000))} min. The worker VM may be stopped; start it (or Resume) to continue.`
                             : data.pipeline_error,
             };
+
+            // Keep the progress bar monotonic within a run. A (re)start (queued/idle) resets the
+            // floor so add-files / reprocess can legitimately restart low; while running we never
+            // show less than the highest value already reached; completed pins to 100.
+            {
+                const st = String(patched.pipeline_status ?? "");
+                const cur = typeof patched.pipeline_progress_percent === "number"
+                    ? patched.pipeline_progress_percent
+                    : 0;
+                if (st === "completed") {
+                    progressFloorRef.current.set(libraryId, 100);
+                } else if (st === "queued" || st === "idle") {
+                    progressFloorRef.current.set(libraryId, cur);
+                } else if (st === "running") {
+                    const floor = progressFloorRef.current.get(libraryId) ?? 0;
+                    const shown = Math.max(cur, floor);
+                    progressFloorRef.current.set(libraryId, shown);
+                    patched.pipeline_progress_percent = shown;
+                }
+            }
 
             setActiveLibrary((prev) =>
                 prev && prev.id === libraryId ? { ...prev, ...patched } : prev

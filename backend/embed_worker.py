@@ -474,6 +474,7 @@ def _maybe_finalize_pipeline(library_id: str):
                 "pipeline_progress_percent": 100,
                 "pipeline_error": None,
                 "pipeline_finished_at": finished,
+                "last_synced_at": finished,
                 "completed_batches": total_batches,
             }
         ).eq("id", library_id),

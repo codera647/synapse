@@ -110,17 +110,18 @@ export default function LibraryDrawer({ open, onClose, library, organizationId, 
       const [docs, embeds, libMeta] = await Promise.all([
         supabase.from("documents").select("id", { count: "exact", head: true }).eq("library_id", libId),
         supabase.from("chunk_embeddings").select("chunk_id", { count: "exact", head: true }).eq("library_id", libId),
-        supabase.from("libraries").select("last_synced_at").eq("id", libId).single(),
+        supabase.from("libraries").select("last_synced_at, pipeline_finished_at").eq("id", libId).single(),
       ]);
 
       setDocsCount(typeof docs.count === "number" ? docs.count : null);
       setEmbedCount(typeof embeds.count === "number" ? embeds.count : null);
-      const meta = libMeta.data;
-      const last =
-        meta && typeof meta === "object" && "last_synced_at" in meta
-          ? (meta as { last_synced_at: string | null }).last_synced_at
-          : null;
-      setLastSyncedAt(last);
+      const meta = (libMeta.data && typeof libMeta.data === "object" ? libMeta.data : {}) as {
+        last_synced_at?: string | null;
+        pipeline_finished_at?: string | null;
+      };
+      // Older completed libraries never recorded last_synced_at — fall back to when the pipeline
+      // finished so "Last Synced" isn't perpetually blank.
+      setLastSyncedAt(meta.last_synced_at ?? meta.pipeline_finished_at ?? null);
 
       if (docs.error) onLog?.({ level: "warn", message: "Drawer: failed to fetch documents count", details: docs.error });
       if (embeds.error) onLog?.({ level: "warn", message: "Drawer: failed to fetch embeddings count", details: embeds.error });
