@@ -32,6 +32,7 @@ export default function KnowledgeGraphWorkspace({
   const [menuOpen, setMenuOpen] = useState(false);
   const [status, setStatus] = useState<GraphStatus | null>(null);
   const [graph, setGraph] = useState<{ nodes: KGNode[]; edges: KGEdge[] } | null>(null);
+  const [checking, setChecking] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -88,6 +89,7 @@ export default function KnowledgeGraphWorkspace({
     setMenuOpen(false);
     setGraph(null);
     setStatus(null);
+    setChecking(true);
     stopPoll();
     try {
       const r = await fetch(`/api/backend/kg/status?library_id=${encodeURIComponent(library)}&organization_id=${encodeURIComponent(orgId || "")}`, { cache: "no-store" });
@@ -98,6 +100,8 @@ export default function KnowledgeGraphWorkspace({
       else if (g && (g.status === "building" || g.status === "queued")) poll(library);
     } catch (e) {
       onLog?.({ level: "warn", message: "Graph: status check failed", details: e });
+    } finally {
+      setChecking(false);
     }
   }, [orgId, fetchGraph, poll, onLog]);
 
@@ -212,8 +216,12 @@ export default function KnowledgeGraphWorkspace({
       <div className="min-h-0 flex-1 overflow-hidden rounded-2xl">
         {!libId ? (
           <EmptyState title="Pick a library" sub="Select a processed library above, then create its knowledge graph." />
+        ) : checking ? (
+          <KnowledgeGraphLoader title="Opening the knowledge graph…" subtitle="Looking for an existing graph" />
         ) : st === "building" || st === "queued" ? (
           <KnowledgeGraphLoader stage={status?.stage || undefined} current={status?.progress_current} total={status?.progress_total} onCancel={() => void cancel()} />
+        ) : st === "done" && !graph ? (
+          <KnowledgeGraphLoader title="Loading the knowledge graph…" subtitle="Drawing entities &amp; relationships" />
         ) : st === "error" ? (
           <div className="grid h-full place-items-center px-6 text-center">
             <div className="max-w-sm">

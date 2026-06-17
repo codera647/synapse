@@ -15,6 +15,7 @@ import ChatWorkspace from "@/components/ChatWorkspace";
 import AgentWorkspace from "@/components/AgentWorkspace";
 import KnowledgeGraphWorkspace from "@/components/KnowledgeGraphWorkspace";
 import TeamWorkspace from "@/components/TeamWorkspace";
+import UsageWorkspace from "@/components/UsageWorkspace";
 import SettingsModal, { type Personalization } from "@/components/SettingsModal";
 
 type Library = {
@@ -1152,7 +1153,7 @@ function DashboardPageInner() {
 
                 {/* Main content */}
                 <main
-                    className={`flex-1 w-full px-6 ml-16 ${activeTab === "chat" || activeTab === "agent" || activeTab === "graph"
+                    className={`flex-1 w-full px-6 ml-16 ${activeTab === "chat" || activeTab === "agent" || activeTab === "graph" || activeTab === "usage"
                         ? "max-w-none mx-0 pr-10 pt-3 pb-4"
                         : "max-w-6xl mx-auto pt-8 pb-10"
                         }`}
@@ -1196,6 +1197,14 @@ function DashboardPageInner() {
                             organization={currentOrg ? { id: currentOrg.id, name: currentOrg.name } : null}
                             onLog={(e) =>
                                 addLog({ level: e.level, source: "team", message: e.message, details: e.details })
+                            }
+                        />
+                    ) : activeTab === "usage" ? (
+                        <UsageWorkspace
+                            supabase={supabase}
+                            organization={currentOrg ? { id: currentOrg.id, name: currentOrg.name } : null}
+                            onLog={(e) =>
+                                addLog({ level: e.level, source: "usage", message: e.message, details: e.details })
                             }
                         />
                     ) : (

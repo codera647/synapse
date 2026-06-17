@@ -21,11 +21,15 @@ export default function KnowledgeGraphLoader({
   current,
   total,
   onCancel,
+  title = "Building the knowledge graph…",
+  subtitle,
 }: {
   stage?: string;
   current?: number;
   total?: number;
   onCancel?: () => void;
+  title?: string;
+  subtitle?: string;
 }) {
   const pct = total && total > 0 ? Math.min(100, Math.round(((current || 0) / total) * 100)) : null;
   return (
@@ -69,8 +73,8 @@ export default function KnowledgeGraphLoader({
           </svg>
         </div>
 
-        <div className="mt-2 text-sm font-medium text-white/85">Building the knowledge graph…</div>
-        <div className="mt-1 text-xs text-violet-200/80">{stage || "Reading your documents"}</div>
+        <div className="mt-2 text-sm font-medium text-white/85">{title}</div>
+        <div className="mt-1 text-xs text-violet-200/80">{subtitle || stage || "Reading your documents"}</div>
 
         {pct !== null ? (
           <div className="mt-4 w-64">
