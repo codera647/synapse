@@ -14,10 +14,27 @@ Data acquisition for Agent mode.
 
 from __future__ import annotations
 
+import datetime as _dt
 import io
 import json
 import os
+from decimal import Decimal as _Decimal
 from typing import Any, Dict, List, Optional
+
+
+def _json_safe(v: Any) -> Any:
+    """Coerce a parsed cell value to a JSON-serializable type. Excel date/time cells
+    come back as datetime objects (and numbers can be Decimal), which break the JSONB
+    insert into agent_uploads.preview and any spec serialization."""
+    if v is None or isinstance(v, (str, int, float, bool)):
+        return v
+    if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
+        return v.isoformat()
+    if isinstance(v, _Decimal):
+        return float(v)
+    if isinstance(v, bytes):
+        return v.decode("utf-8", "replace")
+    return str(v)
 
 import boto3
 
@@ -98,10 +115,13 @@ def _finalize(columns: List[str], rows: List[List[Any]], sheet: str, sheets: Lis
         for i, c in enumerate(columns):
             series[c].append(r[i] if i < len(r) else None)
     dtypes = {c: _infer_dtype(series[c]) for c in columns}
-    # cast numeric columns to real numbers for charting
+    # cast numeric columns to real numbers for charting; make everything else
+    # JSON-safe (datetime/date/Decimal cells would otherwise break the preview insert)
     for c in columns:
         if dtypes[c] == "number":
             series[c] = [_to_number(v) for v in series[c]]
+        else:
+            series[c] = [_json_safe(v) for v in series[c]]
     sample_rows = [{c: (series[c][i] if i < len(series[c]) else None) for c in columns}
                    for i in range(min(20, len(rows)))]
     return {
