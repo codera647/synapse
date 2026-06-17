@@ -1,5 +1,7 @@
 "use client";
 
+import KnowledgeGraphLoader from "@/components/KnowledgeGraphLoader";
+
 // Per-tab loading skeletons shown while the dashboard boots, so each page shows a layout that
 // matches what's about to load (instead of the libraries grid everywhere). Uses the shared
 // `usage-bar` / `animate-pulse` / `gen-shimmer-text` animations.
@@ -115,11 +117,6 @@ export function AgentSkeleton() {
 }
 
 export function GraphSkeleton() {
-  const dots = [
-    { x: "20%", y: "32%" }, { x: "38%", y: "58%" }, { x: "58%", y: "26%" }, { x: "74%", y: "60%" },
-    { x: "50%", y: "42%" }, { x: "30%", y: "72%" }, { x: "66%", y: "46%" }, { x: "46%", y: "20%" },
-    { x: "80%", y: "34%" }, { x: "24%", y: "50%" },
-  ];
   return (
     <div className="h-[calc(100vh-5.25rem)] px-4 pb-4 pt-3 sm:px-6 md:pr-10">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -127,19 +124,7 @@ export function GraphSkeleton() {
         <div className={`h-9 w-40 rounded-xl ${bar}`} />
       </div>
       <div className="relative h-[calc(100%-2.75rem)] overflow-hidden rounded-2xl surface-panel shadow-[0_18px_70px_rgba(0,0,0,0.35)]">
-        {dots.map((d, i) => (
-          <span
-            key={i}
-            className="absolute h-3 w-3 animate-pulse rounded-full bg-gradient-to-br from-violet-400 to-fuchsia-400 shadow-[0_0_12px_rgba(167,139,250,0.5)]"
-            style={{ left: d.x, top: d.y, animationDelay: `${i * 150}ms` }}
-          />
-        ))}
-        <div className="absolute inset-0 grid place-items-center">
-          <div className="flex flex-col items-center gap-3">
-            <span className="gen-orb-core h-8 w-8 rounded-full" />
-            <Caption label="Loading knowledge graph…" />
-          </div>
-        </div>
+        <KnowledgeGraphLoader title="Loading knowledge graph…" subtitle="Preparing your graph" />
       </div>
     </div>
   );

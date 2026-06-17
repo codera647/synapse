@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 import GradientBackground from "@/components/GradientBackground";
+import LimitReachedDialog, { type LimitInfo } from "@/components/LimitReachedDialog";
+import { countOwnedOrgs, getUserOrgIds, getUserPlan } from "@/lib/usage";
+import { planLimits } from "@/lib/planLimits";
 import { FiChevronDown } from "react-icons/fi";
 
 export default function NewOrganizationPage() {
@@ -16,6 +19,8 @@ export default function NewOrganizationPage() {
     const [plan, setPlan] = useState("free");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [limitInfo, setLimitInfo] = useState<LimitInfo | null>(null);
+    const [limitPlanLabel, setLimitPlanLabel] = useState("Free");
 
     const handleCreate = async () => {
         if (!name.trim()) {
@@ -34,6 +39,30 @@ export default function NewOrganizationPage() {
                 setError("You must be logged in to create an organization");
                 setLoading(false);
                 return;
+            }
+
+            // Enforce the per-user organization limit (free = 1).
+            try {
+                const orgIds = await getUserOrgIds(supabase);
+                const [userPlan, owned] = await Promise.all([
+                    getUserPlan(supabase, orgIds),
+                    countOwnedOrgs(supabase),
+                ]);
+                const lim = planLimits(userPlan);
+                if (Number.isFinite(lim.organizations) && owned >= lim.organizations) {
+                    setLimitPlanLabel(lim.label);
+                    setLimitInfo({
+                        title: "Organization limit reached",
+                        message: `Your ${lim.label} plan includes ${lim.organizations} organization${lim.organizations === 1 ? "" : "s"}. Delete one from Account preferences to make room, or upgrade for more.`,
+                        used: owned,
+                        limit: lim.organizations,
+                        unit: "orgs",
+                    });
+                    setLoading(false);
+                    return;
+                }
+            } catch {
+                /* if the usage check fails, don't block creation */
             }
 
             // Generate slug from name
@@ -90,6 +119,15 @@ export default function NewOrganizationPage() {
     return (
         <div className="relative min-h-screen flex flex-col overflow-hidden">
             <GradientBackground />
+            <LimitReachedDialog
+                info={limitInfo}
+                planLabel={limitPlanLabel}
+                onClose={() => setLimitInfo(null)}
+                onManage={() => {
+                    setLimitInfo(null);
+                    router.push("/dashboard");
+                }}
+            />
 
             {/* Simple header */}
             <header className="w-full surface-app border-b border-white/10 flex items-center justify-between px-6 h-14 backdrop-blur-xl">

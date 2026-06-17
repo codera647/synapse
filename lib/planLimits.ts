@@ -7,6 +7,7 @@ export type Plan = "free" | "pro" | "enterprise";
 export type PlanLimits = {
   label: string;
   /** cumulative resources */
+  organizations: number;
   libraries: number;
   documents: number;
   storageBytes: number;
@@ -21,6 +22,7 @@ const GB = 1024 ** 3;
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
   free: {
     label: "Free",
+    organizations: 1,
     libraries: 5,
     documents: 150,
     storageBytes: 1 * GB,
@@ -30,6 +32,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
   },
   pro: {
     label: "Pro",
+    organizations: 10,
     libraries: 50,
     documents: 5_000,
     storageBytes: 50 * GB,
@@ -39,6 +42,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
   },
   enterprise: {
     label: "Enterprise",
+    organizations: Infinity,
     libraries: Infinity,
     documents: Infinity,
     storageBytes: Infinity,

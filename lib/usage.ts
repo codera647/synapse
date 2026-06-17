@@ -23,6 +23,21 @@ export async function getUserOrgIds(supabase: SupabaseClient): Promise<string[]>
   return Array.from(new Set(ids));
 }
 
+/** Count of organizations the current user OWNS (role = owner). Used to enforce the org-per-user limit. */
+export async function countOwnedOrgs(supabase: SupabaseClient): Promise<number> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const uid = user?.id;
+  if (!uid) return 0;
+  const { count } = await supabase
+    .from("organization_members")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", uid)
+    .eq("role", "owner");
+  return count ?? 0;
+}
+
 // The query builder is fluent; type it loosely so optional `.eq`/`.gte` refinements compose cleanly.
 type AnyQuery = {
   eq: (c: string, v: unknown) => AnyQuery;

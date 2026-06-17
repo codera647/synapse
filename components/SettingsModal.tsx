@@ -95,6 +95,73 @@ export default function SettingsModal({
   const [workersLoading, setWorkersLoading] = useState(false);
   const [workersErr, setWorkersErr] = useState<string | null>(null);
 
+  // Organizations the user owns (Account → delete).
+  const [ownedOrgs, setOwnedOrgs] = useState<{ id: string; name: string }[]>([]);
+  const [orgsBusy, setOrgsBusy] = useState(false);
+  const [confirmOrgId, setConfirmOrgId] = useState<string | null>(null);
+  const [confirmText, setConfirmText] = useState("");
+  const [deletingOrgId, setDeletingOrgId] = useState<string | null>(null);
+
+  const loadOwnedOrgs = useCallback(async () => {
+    setOrgsBusy(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const uid = user?.id;
+      if (!uid) {
+        setOwnedOrgs([]);
+        return;
+      }
+      const { data } = await supabase
+        .from("organization_members")
+        .select("organization_id, role, organizations(id, name)")
+        .eq("user_id", uid)
+        .eq("role", "owner");
+      const orgs = (((data as unknown) as Array<Record<string, unknown>>) || [])
+        .map((m) => {
+          const oRaw = m.organizations as Record<string, unknown> | Record<string, unknown>[] | null;
+          const o = Array.isArray(oRaw) ? oRaw[0] : oRaw;
+          return o ? { id: String(o.id), name: String(o.name || "Org") } : null;
+        })
+        .filter(Boolean) as { id: string; name: string }[];
+      setOwnedOrgs(orgs);
+    } finally {
+      setOrgsBusy(false);
+    }
+  }, [supabase]);
+
+  useEffect(() => {
+    if (open) void loadOwnedOrgs();
+  }, [open, loadOwnedOrgs]);
+
+  const deleteOrg = async (id: string) => {
+    setDeletingOrgId(id);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const res = await fetch("/api/organization/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ organization_id: id, user_id: user?.id }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || j.error) {
+        setNotice({ kind: "err", text: j.error || "Couldn't delete organization." });
+        return;
+      }
+      setNotice({ kind: "ok", text: "Organization deleted." });
+      setConfirmOrgId(null);
+      setConfirmText("");
+      setOwnedOrgs((prev) => prev.filter((o) => o.id !== id));
+      // Re-resolve the dashboard's current org (it may have been the deleted one).
+      setTimeout(() => window.location.assign("/dashboard"), 700);
+    } finally {
+      setDeletingOrgId(null);
+    }
+  };
+
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const flash = (kind: "ok" | "err", text: string) => {
@@ -581,10 +648,92 @@ export default function SettingsModal({
                 )}
               </div>
             ) : (
-              <div className="space-y-5">
+              <div className="space-y-6">
                 <Field label="Signed in as">
                   <input value={email} disabled className="settings-input opacity-60" />
                 </Field>
+
+                {/* Organizations you own */}
+                <div>
+                  <div className="mb-2 text-xs uppercase tracking-wide text-white/35">Your organizations</div>
+                  {orgsBusy && ownedOrgs.length === 0 ? (
+                    <div className="text-sm text-white/40">Loading…</div>
+                  ) : ownedOrgs.length === 0 ? (
+                    <div className="text-sm text-white/40">You don&apos;t own any organizations.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {ownedOrgs.map((o) => (
+                        <div key={o.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-medium text-white/85">{o.name}</div>
+                              <div className="text-[11px] text-white/35">
+                                Deleting removes all its libraries, chats, agent runs &amp; graphs.
+                              </div>
+                            </div>
+                            {confirmOrgId !== o.id ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setConfirmOrgId(o.id);
+                                  setConfirmText("");
+                                }}
+                                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-200 hover:bg-rose-500/15"
+                              >
+                                <FiTrash2 className="h-3.5 w-3.5" /> Delete
+                              </button>
+                            ) : null}
+                          </div>
+
+                          {confirmOrgId === o.id ? (
+                            <div className="mt-3 rounded-lg border border-rose-400/25 bg-rose-500/[0.07] p-3">
+                              <p className="text-xs leading-relaxed text-rose-100/90">
+                                This permanently deletes <span className="font-semibold">{o.name}</span> and everything
+                                in it — libraries, documents, chats, agent runs, and knowledge graphs. This cannot be
+                                undone.
+                              </p>
+                              <p className="mt-2 text-[11px] text-white/45">
+                                Type <span className="font-semibold text-white/75">{o.name}</span> to confirm:
+                              </p>
+                              <input
+                                value={confirmText}
+                                onChange={(e) => setConfirmText(e.target.value)}
+                                placeholder={o.name}
+                                className="settings-input mt-1.5"
+                              />
+                              <div className="mt-2.5 flex justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setConfirmOrgId(null);
+                                    setConfirmText("");
+                                  }}
+                                  className="rounded-lg px-3 py-1.5 text-xs text-white/60 hover:text-white"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={confirmText.trim() !== o.name || deletingOrgId === o.id}
+                                  onClick={() => void deleteOrg(o.id)}
+                                  className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/80 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {deletingOrgId === o.id ? (
+                                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                                  ) : (
+                                    <FiTrash2 className="h-3.5 w-3.5" />
+                                  )}
+                                  Delete forever
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <div>
                   <button
                     type="button"
