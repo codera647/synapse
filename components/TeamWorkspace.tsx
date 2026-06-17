@@ -701,7 +701,10 @@ export default function TeamWorkspace({
                           const hasWrite = grants.get(s.libraryId)?.has(m.userId) ?? false;
                           return (
                             <div key={m.userId} className="flex items-center justify-between gap-2">
-                              <span className="min-w-0 flex-1 truncate text-xs text-white/75">{m.name || m.email}</span>
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-xs text-white/80">{m.name || m.email}</div>
+                                {m.name ? <div className="truncate text-[10px] text-white/40">{m.email}</div> : null}
+                              </div>
                               <div className="flex shrink-0 overflow-hidden rounded-lg border border-white/10 text-[11px]">
                                 <button
                                   type="button"
