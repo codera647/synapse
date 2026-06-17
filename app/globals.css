@@ -282,6 +282,8 @@ body {
 }
 
 @keyframes scaleIn { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes drawerInLeft { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 
 /* Usage page loading skeleton — bars rise and fall like a live chart filling in */
 @keyframes usageBar {

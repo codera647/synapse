@@ -93,20 +93,19 @@ export default function DashboardSidebar({
                 </div>
             </aside>
 
-            {/* ===== Mobile drawer (below md): full labels, slide-in over backdrop ===== */}
-            <div className={`md:hidden fixed inset-0 z-50 ${mobileOpen ? "" : "pointer-events-none"}`}>
+            {/* ===== Mobile drawer (below md): full labels, slide-in over backdrop.
+                 Mounted only while open so the closed state never overlays (and never
+                 swallows taps on) the navbar's hamburger. ===== */}
+            {mobileOpen && (
+            <div className="md:hidden fixed inset-0 z-[70]">
                 {/* backdrop */}
                 <div
-                    className={`absolute inset-0 bg-black/60 backdrop-blur-[2px] transition-opacity duration-200 ${
-                        mobileOpen ? "opacity-100" : "opacity-0"
-                    }`}
+                    className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-[fadeIn_.2s_ease-out]"
                     onClick={onMobileClose}
                     aria-hidden
                 />
                 <aside
-                    className={`absolute left-0 top-0 h-full w-64 max-w-[82vw] flex flex-col border-r border-white/10 surface-app backdrop-blur-xl transition-transform duration-300 ease-out ${
-                        mobileOpen ? "translate-x-0" : "-translate-x-full"
-                    }`}
+                    className="absolute left-0 top-0 h-full w-64 max-w-[82vw] flex flex-col border-r border-white/10 surface-app backdrop-blur-xl animate-[drawerInLeft_.26s_cubic-bezier(.16,1,.3,1)]"
                 >
                     <div className="flex items-center justify-between px-4 h-14 border-b border-white/10">
                         <span className="text-sm font-semibold text-white/80">Menu</span>
@@ -163,6 +162,7 @@ export default function DashboardSidebar({
                     </div>
                 </aside>
             </div>
+            )}
         </>
     );
 }

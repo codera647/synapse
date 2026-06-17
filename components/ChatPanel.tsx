@@ -1573,15 +1573,16 @@ export default function ChatPanel({
         </aside>
       ) : null}
 
-      {/* History — mobile slide-over */}
-      <div className={`lg:hidden fixed inset-0 z-50 ${mobileHistoryOpen ? "" : "pointer-events-none"}`}>
+      {/* History — mobile slide-over (mounted only while open) */}
+      {mobileHistoryOpen && (
+      <div className="lg:hidden fixed inset-0 z-[70]">
         <div
-          className={`absolute inset-0 bg-black/60 backdrop-blur-[2px] transition-opacity duration-200 ${mobileHistoryOpen ? "opacity-100" : "opacity-0"}`}
+          className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-[fadeIn_.2s_ease-out]"
           onClick={() => setMobileHistoryOpen(false)}
           aria-hidden
         />
         <aside
-          className={`absolute left-0 top-0 h-full w-72 max-w-[85vw] flex flex-col border-r border-white/10 bg-[#0d0b1a] transition-transform duration-300 ease-out ${mobileHistoryOpen ? "translate-x-0" : "-translate-x-full"}`}
+          className="absolute left-0 top-0 h-full w-72 max-w-[85vw] flex flex-col border-r border-white/10 bg-[#0d0b1a] animate-[drawerInLeft_.26s_cubic-bezier(.16,1,.3,1)]"
         >
           <div className="flex items-center justify-between px-3 h-12 border-b border-white/10">
             <span className="text-sm font-semibold text-white/80">Chats</span>
@@ -1611,6 +1612,7 @@ export default function ChatPanel({
           </div>
         </aside>
       </div>
+      )}
 
       {/* Main column */}
       <div className="flex flex-1 min-w-0 flex-col">

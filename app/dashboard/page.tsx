@@ -8,6 +8,7 @@ import DashboardNavbar from "@/components/DashboardNavbar";
 import { FiGrid, FiList, FiSearch, FiPlus } from "react-icons/fi";
 import DashboardSidebar from "@/components/DashboardSidebar";
 import LibrariesSkeleton from "@/components/LibrariesSkeleton";
+import { ChatSkeleton, AgentSkeleton, GraphSkeleton, UsageSkeleton } from "@/components/WorkspaceSkeletons";
 import LogPanel from "@/components/LogPanel";
 import { LogProvider, useLog } from "@/context/LogContext";
 import LibraryDrawer from "@/components/LibraryDrawer";
@@ -1198,9 +1199,19 @@ function DashboardPageInner() {
                     {/* Sidebar on the left */}
                     <DashboardSidebar onToggleConsole={toggleConsole} consoleOpen={consoleOpen} mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
 
-                    {/* Animated libraries skeleton while the workspace loads */}
+                    {/* Tab-aware animated skeleton while the workspace loads */}
                     <main className="flex-1 w-full min-w-0 md:ml-16">
-                        <LibrariesSkeleton />
+                        {activeTab === "chat" ? (
+                            <ChatSkeleton />
+                        ) : activeTab === "agent" ? (
+                            <AgentSkeleton />
+                        ) : activeTab === "graph" ? (
+                            <GraphSkeleton />
+                        ) : activeTab === "usage" ? (
+                            <UsageSkeleton />
+                        ) : (
+                            <LibrariesSkeleton />
+                        )}
                     </main>
                 </div>
             </div>
