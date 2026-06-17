@@ -1,6 +1,6 @@
 "use client";
 
-import { FiGrid, FiList, FiPlus, FiSearch, FiFilter } from "react-icons/fi";
+import { FiGrid, FiList, FiPlus, FiSearch } from "react-icons/fi";
 
 /**
  * Loading state for the dashboard / libraries view. Mirrors the real library page so the
@@ -40,9 +40,6 @@ export default function LibrariesSkeleton() {
         <div className="relative w-full max-w-[450px]">
           <FiSearch className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-white/25" />
           <div className="h-[42px] w-full animate-pulse rounded-xl bg-white/[0.06]" />
-        </div>
-        <div className="grid h-[42px] w-[42px] place-items-center rounded-xl glass text-white/20">
-          <FiFilter className="h-4 w-4" />
         </div>
       </div>
 

@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { openGoogleDriveFolderPicker } from "@/lib/googleDrivePicker";
 import DashboardNavbar from "@/components/DashboardNavbar";
-import { FiGrid, FiList, FiSearch, FiFilter, FiPlus } from "react-icons/fi";
+import { FiGrid, FiList, FiSearch, FiPlus } from "react-icons/fi";
 import DashboardSidebar from "@/components/DashboardSidebar";
 import LibrariesSkeleton from "@/components/LibrariesSkeleton";
 import LogPanel from "@/components/LogPanel";
@@ -1323,7 +1323,7 @@ function DashboardPageInner() {
                                 </div>
                             </div>
 
-                            {/* Search bar + Filter */}
+                            {/* Search bar */}
                             <div className="flex items-center gap-2 mb-8">
                                 <div className="w-full max-w-[450px] relative">
                                     <FiSearch className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
@@ -1334,9 +1334,6 @@ function DashboardPageInner() {
                                         className="w-full rounded-xl glass pl-10 pr-3 py-2.5 text-sm text-white placeholder:text-white/40 outline-none transition-all focus:border-violet-400/50"
                                     />
                                 </div>
-                                <button className="grid place-items-center h-[42px] w-[42px] rounded-xl glass text-white/50 hover:text-white transition-all">
-                                    <FiFilter className="w-4 h-4" />
-                                </button>
                             </div>
 
                             {/* Libraries list */}

@@ -5,8 +5,6 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import {
     FiChevronDown,
-    FiBell,
-    FiHelpCircle,
     FiCheck,
     FiPlus,
     FiUser,
@@ -15,6 +13,7 @@ import {
     FiSettings,
     FiMenu,
 } from "react-icons/fi";
+import NotificationsBell from "@/components/NotificationsBell";
 
 interface DashboardNavbarProps {
     orgName: string;
@@ -149,12 +148,7 @@ export default function DashboardNavbar({
 
             {/* RIGHT — PROFILE */}
             <div className="flex items-center gap-1.5 sm:gap-2 relative" ref={profileMenuRef}>
-                <button className="hidden sm:grid place-items-center h-9 w-9 rounded-lg text-white/50 hover:text-white hover:bg-white/8 transition-colors">
-                    <FiHelpCircle className="w-4 h-4" />
-                </button>
-                <button className="hidden sm:grid place-items-center h-9 w-9 rounded-lg text-white/50 hover:text-white hover:bg-white/8 transition-colors">
-                    <FiBell className="w-4 h-4" />
-                </button>
+                <NotificationsBell />
 
                 <button
                     onClick={() => {
