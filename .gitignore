@@ -64,3 +64,15 @@ backend/eval/double_bench_demo/
 /Excel_Files/
 /Python_Files/
 /Cpp_Files/
+
+# Thesis build artifacts (keep source, ignore LaTeX output + caches)
+Thesis/**/*.aux
+Thesis/**/*.log
+Thesis/**/*.out
+Thesis/**/*.toc
+Thesis/**/*.lof
+Thesis/**/*.lot
+Thesis/**/*.bbl
+Thesis/**/*.blg
+Thesis/main.pdf
+Thesis/diagrams/__pycache__/

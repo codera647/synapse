@@ -1,0 +1,41 @@
+\clearpage
+\thispagestyle{plain}
+\begin{center}
+{\fontsize{16}{20}\bfseries Abstract\par}
+\end{center}
+\vspace{0.1in}
+
+Organisations and individuals increasingly hold their knowledge in documents: reports,
+spreadsheets, scanned files, slide decks and source code. Finding a precise answer inside
+such a collection, or turning it into a chart, a summary or a clear picture of how its ideas
+connect, still demands a great deal of manual reading. General-purpose chatbots help, but
+they cannot ground their answers in a private library, they invent facts when evidence is
+thin, and they cannot read a scanned page, draw a chart from a table, or show how the
+concepts in a corpus relate to one another.
+
+This thesis presents Synapse, a multi-tenant platform that lets a user connect a library
+of documents and then understand, question, visualise and map that knowledge through a
+single web application. Synapse ingests each document through a pipeline that detects
+layout, reads born-digital and scanned pages (the latter through a vision-language model),
+chunks and embeds the text, and clusters it for topical coverage. A retrieval-augmented
+chat answers questions using a corrective, multi-agent retrieval loop that grades its own
+evidence and abstains when the library cannot support an answer, citing the exact source
+passage for every claim. An agent mode turns the same libraries into artefacts: it plans
+its work, asks the user a clarifying question when a request is genuinely ambiguous, and
+produces interactive charts, written documents, PDFs and generated images. A separate
+knowledge-graph module extracts the entities and relationships from a processed library
+and draws them as an interactive graph that the user can explore. Teams share libraries
+and chat together in real time.
+
+The platform was evaluated on the DOUBLE-BENCH document benchmark for retrieval and
+answer quality, on a set of purpose-built spreadsheet, Python and C++ datasets for
+structured-document understanding, and through functional testing of the agent and graph
+features. The results show accurate document-level retrieval, well-grounded and honest
+answers, and reliable artefact generation, demonstrating that a disciplined pipeline paired
+with a corrective, multi-agent retrieval design can deliver practical document intelligence
+on a user's own private collection.
+
+\vspace{12pt}
+\noindent\textbf{Keywords:} Retrieval-Augmented Generation, Document Intelligence,
+Multi-Agent Systems, Corrective RAG, Knowledge Graphs, Vision-Language Models,
+Question Answering, Data Visualisation, Large Language Models.
