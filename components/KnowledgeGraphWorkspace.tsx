@@ -115,12 +115,30 @@ export default function KnowledgeGraphWorkspace({
       });
       const j = await r.json();
       if (j.error) throw new Error(j.error);
+      if (j.graph_id) setStatus({ id: j.graph_id, status: j.status || "queued", stage: "Queued" });
       poll(libId);
     } catch (e) {
       onLog?.({ level: "error", message: "Graph: build failed to start", details: e });
       setStatus({ id: "", status: "error", error: e instanceof Error ? e.message : "failed to start" });
     }
   }, [orgId, libId, me, poll, onLog]);
+
+  const cancel = useCallback(async () => {
+    const gid = status?.id;
+    stopPoll();
+    setStatus((s) => (s ? { ...s, status: "canceled", stage: "Canceling…" } : s));
+    if (orgId && gid) {
+      try {
+        await fetch("/api/backend/kg/cancel", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ organization_id: orgId, graph_id: gid }),
+        });
+      } catch (e) {
+        onLog?.({ level: "warn", message: "Graph: cancel failed", details: e });
+      }
+    }
+  }, [orgId, status, onLog]);
 
   const fetchNodeChunks = useCallback(async (chunkIds: string[]) => {
     const out: Array<{ chunk_id: string; text: string; doc_title?: string }> = [];
@@ -195,7 +213,7 @@ export default function KnowledgeGraphWorkspace({
         {!libId ? (
           <EmptyState title="Pick a library" sub="Select a processed library above, then create its knowledge graph." />
         ) : st === "building" || st === "queued" ? (
-          <KnowledgeGraphLoader stage={status?.stage || undefined} current={status?.progress_current} total={status?.progress_total} />
+          <KnowledgeGraphLoader stage={status?.stage || undefined} current={status?.progress_current} total={status?.progress_total} onCancel={() => void cancel()} />
         ) : st === "error" ? (
           <div className="grid h-full place-items-center px-6 text-center">
             <div className="max-w-sm">

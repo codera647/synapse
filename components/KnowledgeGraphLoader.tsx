@@ -20,10 +20,12 @@ export default function KnowledgeGraphLoader({
   stage,
   current,
   total,
+  onCancel,
 }: {
   stage?: string;
   current?: number;
   total?: number;
+  onCancel?: () => void;
 }) {
   const pct = total && total > 0 ? Math.min(100, Math.round(((current || 0) / total) * 100)) : null;
   return (
@@ -89,6 +91,16 @@ export default function KnowledgeGraphLoader({
             ))}
           </div>
         )}
+
+        {onCancel ? (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="mt-5 rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs text-white/60 transition-colors hover:border-red-500/40 hover:text-red-200"
+          >
+            Cancel
+          </button>
+        ) : null}
       </div>
     </div>
   );
