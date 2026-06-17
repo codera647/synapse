@@ -1231,6 +1231,7 @@ function DashboardPageInner() {
                 onSelectOrg={handleSelectOrg}
                 onOpenHardware={() => setHardwareOpen(true)}
                 onOpenSettings={() => setSettingsOpen(true)}
+                onOpenMobileNav={() => setMobileNavOpen(true)}
                 avatarUrl={avatarUrl}
                 userEmail={userEmail}
                 onLogout={handleLogout}
