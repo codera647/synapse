@@ -766,7 +766,7 @@ export default function TeamWorkspace({
           organizationId={teamId}
           library={addFilesLib}
           currentUserId={me?.id ?? null}
-          allowDrive={false}
+          allowRescan={false}
           onStarted={() => flash("ok", "Files added — the library is processing them now.")}
           onLog={onLog}
         />

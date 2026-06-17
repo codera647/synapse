@@ -34,9 +34,17 @@ from sync_worker import (
 
 router = APIRouter()
 
+# The set the document pipeline actually parses (mirrors document_parsers._CODE_EXTS + the doc/image
+# formats handled by layout/extraction). Keep in sync with agent_api._ALLOWED_UPLOAD_EXT.
 _ALLOWED_EXT = {
-    ".pdf", ".docx", ".doc", ".txt", ".md", ".csv", ".xlsx", ".xls",
-    ".pptx", ".ppt", ".png", ".jpg", ".jpeg", ".webp", ".tiff", ".html", ".rtf",
+    # documents
+    ".pdf", ".docx", ".txt", ".text", ".log", ".md", ".markdown", ".csv", ".xlsx", ".xlsm", ".json",
+    # code / source files
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".rb", ".php", ".c", ".cc", ".cpp",
+    ".h", ".hpp", ".cs", ".swift", ".kt", ".scala", ".sh", ".bash", ".sql", ".r", ".m", ".lua", ".pl",
+    ".dart", ".vue", ".css", ".scss",
+    # images (VLM transcription)
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff",
 }
 
 
@@ -105,6 +113,87 @@ def _existing_drive_ids(library_id: str) -> set:
     return {r.get("gdrive_file_id") for r in rows if r.get("gdrive_file_id")}
 
 
+def _existing_by_title(library_id: str, titles: List[str]) -> dict:
+    """title -> existing document row, for the given titles in this library (duplicate detection)."""
+    uniq = list({t for t in (titles or []) if t})
+    out: dict = {}
+    for i in range(0, len(uniq), 100):
+        rows = (
+            supabase.table("documents")
+            .select("id, title, storage_path_raw, storage_path_text")
+            .eq("library_id", library_id).in_("title", uniq[i:i + 100])
+            .execute().data or []
+        )
+        for r in rows:
+            out[str(r.get("title"))] = r
+    return out
+
+
+# per-document derived artefacts live under {stage}/{org}/{lib}/{doc_id}* in R2
+_DOC_R2_PREFIXES = ("text", "layout", "chunks", "visuals", "visuals_manifest",
+                    "tables", "formulas", "charts", "captions")
+
+
+def _r2_delete_prefix(prefix: str) -> None:
+    try:
+        paginator = s3.get_paginator("list_objects_v2")
+        batch: List[dict] = []
+        for page in paginator.paginate(Bucket=R2_BUCKET, Prefix=prefix):
+            for obj in (page.get("Contents") or []):
+                batch.append({"Key": obj["Key"]})
+                if len(batch) >= 1000:
+                    s3.delete_objects(Bucket=R2_BUCKET, Delete={"Objects": batch})
+                    batch = []
+        if batch:
+            s3.delete_objects(Bucket=R2_BUCKET, Delete={"Objects": batch})
+    except Exception:
+        pass
+
+
+def _delete_document(organization_id: str, library_id: str, doc: dict) -> None:
+    """Fully remove ONE document: its R2 objects + chunks + the row. Best-effort on R2 so a storage
+    hiccup never blocks the DB cleanup."""
+    doc_id = doc.get("id")
+    for key in (doc.get("storage_path_raw"), doc.get("storage_path_text")):
+        if key:
+            try:
+                s3.delete_object(Bucket=R2_BUCKET, Key=key)
+            except Exception:
+                pass
+    if doc_id:
+        for stage in _DOC_R2_PREFIXES:
+            _r2_delete_prefix(f"{stage}/{organization_id}/{library_id}/{doc_id}")
+        try:
+            supabase.table("chunk_embeddings").delete().eq("doc_id", doc_id).execute()
+        except Exception:
+            pass
+        try:
+            supabase.table("documents").delete().eq("id", doc_id).execute()
+        except Exception:
+            pass
+
+
+def _truthy(v) -> bool:
+    return str(v or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+class CheckRequest(BaseModel):
+    organization_id: str
+    library_id: str
+    filenames: List[str]
+    acting_user_id: Optional[str] = None
+
+
+@router.post("/library/add-files/check")
+def library_add_check(req: CheckRequest):
+    """Return which of the given filenames already exist in the library (by title)."""
+    lib = _library(req.organization_id, req.library_id)
+    _require_write(lib, req.acting_user_id)
+    names = [(n or "").replace("/", "_").replace("\\", "_") for n in (req.filenames or []) if n]
+    existing = _existing_by_title(req.library_id, names)
+    return {"duplicates": sorted({n for n in names if n in existing})}
+
+
 # ── local upload ─────────────────────────────────────────────────────────────────────
 @router.post("/library/add-files/upload")
 async def library_add_upload(
@@ -112,6 +201,7 @@ async def library_add_upload(
     library_id: str = Form(...),
     created_by_user_id: Optional[str] = Form(None),
     acting_user_id: Optional[str] = Form(None),
+    replace: Optional[str] = Form(None),
     files: List[UploadFile] = File(...),
 ):
     lib = _library(organization_id, library_id)
@@ -119,13 +209,25 @@ async def library_add_upload(
     org_slug = slugify(_org_name(organization_id))
     lib_slug = slugify(lib.get("name") or "library")
     max_bytes = _max_upload_bytes()
+    do_replace = _truthy(replace)
+
+    names = [(f.filename or "upload").replace("/", "_").replace("\\", "_") for f in files]
+    existing = _existing_by_title(library_id, names)
 
     doc_ids: List[str] = []
-    for f in files:
-        name = (f.filename or "upload").replace("/", "_").replace("\\", "_")
+    skipped: List[str] = []
+    for f, name in zip(files, names):
         ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
         if ext not in _ALLOWED_EXT:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext or 'unknown'}")
+        dup = existing.get(name)
+        if dup:
+            if do_replace:
+                _delete_document(organization_id, library_id, dup)
+                existing.pop(name, None)
+            else:
+                skipped.append(name)
+                continue
         data = await f.read()
         if len(data) > max_bytes:
             raise HTTPException(status_code=413, detail=f"{name} is too large.")
@@ -145,7 +247,7 @@ async def library_add_upload(
             "storage_path_raw": key,  # already in R2 -> the sync stage skips the Drive download
         }).execute()
         doc_ids.append(doc_id)
-    return {"added": len(doc_ids), "doc_ids": doc_ids}
+    return {"added": len(doc_ids), "doc_ids": doc_ids, "skipped": skipped}
 
 
 # ── google drive: pick files OR re-scan the connected folder ──────────────────────────
@@ -155,6 +257,7 @@ class DriveAddRequest(BaseModel):
     mode: str  # "files" | "rescan"
     file_ids: Optional[List[str]] = None
     acting_user_id: Optional[str] = None
+    replace: Optional[bool] = None
 
 
 def _drive_meta(access_token: str, file_id: str) -> dict:
@@ -194,11 +297,23 @@ def library_add_drive(req: DriveAddRequest):
     else:
         raise HTTPException(status_code=400, detail="Invalid mode.")
 
-    new_rows, doc_ids = [], []
+    do_replace = bool(req.replace)
+    by_title = _existing_by_title(req.library_id, [str(f.get("name") or "") for f in files])
+
+    new_rows, doc_ids, skipped = [], [], []
     for f in files:
         fid = f.get("id")
         if not fid or fid in existing:
             continue
+        title = str(f.get("name") or fid)
+        dup = by_title.get(title)
+        if dup:
+            if do_replace:
+                _delete_document(req.organization_id, req.library_id, dup)
+                by_title.pop(title, None)
+            else:
+                skipped.append(title)
+                continue
         existing.add(fid)
         doc_id = str(uuid.uuid4())
         doc_ids.append(doc_id)
@@ -206,7 +321,7 @@ def library_add_drive(req: DriveAddRequest):
             "id": doc_id,
             "organization_id": req.organization_id,
             "library_id": req.library_id,
-            "title": f.get("name") or fid,
+            "title": title,
             "mime_type": f.get("mimeType"),
             "file_size_bytes": int(f.get("size") or 0),
             "status": "pending",
@@ -214,7 +329,7 @@ def library_add_drive(req: DriveAddRequest):
         })
     if new_rows:
         supabase.table("documents").upsert(new_rows, on_conflict="library_id,gdrive_file_id").execute()
-    return {"added": len(doc_ids), "doc_ids": doc_ids}
+    return {"added": len(doc_ids), "doc_ids": doc_ids, "skipped": skipped}
 
 
 # ── commit: batch the new docs + restart the pipeline ─────────────────────────────────

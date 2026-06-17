@@ -2,11 +2,14 @@
 
 import { useCallback, useRef, useState } from "react";
 import {
-  FiX, FiUploadCloud, FiFile, FiTrash2, FiHardDrive, FiRefreshCw, FiLoader,
+  FiX, FiUploadCloud, FiFile, FiTrash2, FiHardDrive, FiRefreshCw, FiLoader, FiAlertTriangle,
 } from "react-icons/fi";
-import { openGoogleDriveFilePicker, type PickedDriveFile } from "@/lib/googleDrivePicker";
+import {
+  openGoogleDriveFilePicker, downloadDriveFile, driveFileName, type PickedDriveFile,
+} from "@/lib/googleDrivePicker";
 
 type LogFn = (e: { level: "info" | "warn" | "error" | "success"; message: string; details?: unknown }) => void;
+type StagedDrive = PickedDriveFile & { token: string };
 
 export default function AddFilesModal({
   open,
@@ -14,7 +17,8 @@ export default function AddFilesModal({
   organizationId,
   library,
   currentUserId,
-  allowDrive = true,
+  allowDrivePicker = true,
+  allowRescan = true,
   onStarted,
   onLog,
 }: {
@@ -23,16 +27,18 @@ export default function AddFilesModal({
   organizationId: string;
   library: { id: string; name: string };
   currentUserId?: string | null;
-  allowDrive?: boolean;
+  allowDrivePicker?: boolean;
+  allowRescan?: boolean;
   onStarted?: (libraryId: string) => void;
   onLog?: LogFn;
 }) {
   const [localFiles, setLocalFiles] = useState<File[]>([]);
-  const [driveFiles, setDriveFiles] = useState<PickedDriveFile[]>([]);
+  const [driveFiles, setDriveFiles] = useState<StagedDrive[]>([]);
   const [rescan, setRescan] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDuplicates, setPendingDuplicates] = useState<string[] | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const addLocal = useCallback((files: FileList | File[]) => {
@@ -45,10 +51,10 @@ export default function AddFilesModal({
 
   const pickDrive = useCallback(async () => {
     try {
-      await openGoogleDriveFilePicker((files) => {
+      await openGoogleDriveFilePicker((files, token) => {
         setDriveFiles((prev) => {
           const ids = new Set(prev.map((f) => f.id));
-          return [...prev, ...files.filter((f) => !ids.has(f.id))];
+          return [...prev, ...files.filter((f) => !ids.has(f.id)).map((f) => ({ ...f, token }))];
         });
       });
     } catch (e) {
@@ -59,84 +65,123 @@ export default function AddFilesModal({
 
   const total = localFiles.length + driveFiles.length + (rescan ? 1 : 0);
 
-  const submit = useCallback(async () => {
-    if (submitting || total === 0) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const docIds: string[] = [];
+  // ---- the actual upload, given the user's duplicate decision ----
+  const proceed = useCallback(
+    async (choice: "none" | "replace" | "skip", duplicates: string[]) => {
+      setPendingDuplicates(null);
+      setSubmitting(true);
+      setError(null);
+      try {
+        const replace = choice === "replace";
+        const dupSet = new Set(choice === "skip" ? duplicates : []);
+        const acting = currentUserId ?? null;
 
-      if (localFiles.length) {
-        const fd = new FormData();
-        fd.append("organization_id", organizationId);
-        fd.append("library_id", library.id);
-        if (currentUserId) {
-          fd.append("created_by_user_id", currentUserId);
-          fd.append("acting_user_id", currentUserId);
+        // Build the file list for the local-upload endpoint (local + downloaded Drive files).
+        const uploadFiles: File[] = localFiles.filter((f) => !dupSet.has(f.name));
+        for (const d of driveFiles) {
+          if (dupSet.has(driveFileName(d))) continue;
+          uploadFiles.push(await downloadDriveFile(d, d.token));
         }
-        localFiles.forEach((f) => fd.append("files", f));
-        const res = await fetch("/api/library/add-files/upload", { method: "POST", body: fd });
-        const j = await res.json().catch(() => ({}));
-        if (!res.ok || j.error) throw new Error(j.error || `Upload failed (HTTP ${res.status})`);
-        docIds.push(...(j.doc_ids || []));
-      }
 
-      const driveCall = async (body: Record<string, unknown>) => {
-        const res = await fetch("/api/backend/library/add-files/drive", {
+        const docIds: string[] = [];
+
+        if (uploadFiles.length) {
+          const fd = new FormData();
+          fd.append("organization_id", organizationId);
+          fd.append("library_id", library.id);
+          if (currentUserId) {
+            fd.append("created_by_user_id", currentUserId);
+            fd.append("acting_user_id", currentUserId);
+          }
+          fd.append("replace", replace ? "true" : "false");
+          uploadFiles.forEach((f) => fd.append("files", f));
+          const res = await fetch("/api/library/add-files/upload", { method: "POST", body: fd });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok || j.error) throw new Error(j.error || `Upload failed (HTTP ${res.status})`);
+          docIds.push(...(j.doc_ids || []));
+        }
+
+        if (rescan && allowRescan) {
+          const res = await fetch("/api/backend/library/add-files/drive", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              organization_id: organizationId,
+              library_id: library.id,
+              mode: "rescan",
+              acting_user_id: acting,
+              replace,
+            }),
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok || j.error) throw new Error(j.error || `Re-scan failed (HTTP ${res.status})`);
+          docIds.push(...(j.doc_ids || []));
+        }
+
+        if (docIds.length === 0) {
+          setError("No new files were added (they may already be in this library).");
+          setSubmitting(false);
+          return;
+        }
+
+        const commit = await fetch("/api/backend/library/add-files/commit", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ organization_id: organizationId, library_id: library.id, doc_ids: docIds, acting_user_id: acting }),
         });
-        const j = await res.json().catch(() => ({}));
-        if (!res.ok || j.error) throw new Error(j.error || `Drive add failed (HTTP ${res.status})`);
-        docIds.push(...(j.doc_ids || []));
-      };
+        const cj = await commit.json().catch(() => ({}));
+        if (!commit.ok || cj.error) throw new Error(cj.error || `Couldn't start processing (HTTP ${commit.status})`);
 
-      if (driveFiles.length) {
-        await driveCall({
-          organization_id: organizationId,
-          library_id: library.id,
-          mode: "files",
-          file_ids: driveFiles.map((f) => f.id),
-          acting_user_id: currentUserId ?? null,
-        });
-      }
-      if (rescan) {
-        await driveCall({
-          organization_id: organizationId,
-          library_id: library.id,
-          mode: "rescan",
-          acting_user_id: currentUserId ?? null,
-        });
-      }
-
-      if (docIds.length === 0) {
-        setError("No new files were found to add (they may already be in this library).");
+        onLog?.({ level: "success", message: `Added ${docIds.length} file(s) to "${library.name}" — processing started.` });
+        onStarted?.(library.id);
+        setLocalFiles([]); setDriveFiles([]); setRescan(false);
+        onClose();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Something went wrong.");
+        onLog?.({ level: "error", message: "Add files failed", details: e });
+      } finally {
         setSubmitting(false);
-        return;
       }
+    },
+    [localFiles, driveFiles, rescan, allowRescan, organizationId, library, currentUserId, onStarted, onClose, onLog],
+  );
 
-      const commit = await fetch("/api/backend/library/add-files/commit", {
+  // ---- click handler: duplicate pre-check, then proceed (or prompt) ----
+  const onAddClick = useCallback(async () => {
+    if (submitting || total === 0) return;
+    setError(null);
+    const candidateNames = [...localFiles.map((f) => f.name), ...driveFiles.map((d) => driveFileName(d))];
+    if (candidateNames.length === 0) {
+      // only a re-scan staged — nothing to pre-check
+      void proceed("none", []);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/backend/library/add-files/check", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ organization_id: organizationId, library_id: library.id, doc_ids: docIds, acting_user_id: currentUserId ?? null }),
+        body: JSON.stringify({
+          organization_id: organizationId,
+          library_id: library.id,
+          filenames: candidateNames,
+          acting_user_id: currentUserId ?? null,
+        }),
       });
-      const cj = await commit.json().catch(() => ({}));
-      if (!commit.ok || cj.error) throw new Error(cj.error || `Couldn't start processing (HTTP ${commit.status})`);
-
-      onLog?.({ level: "success", message: `Added ${docIds.length} file(s) to "${library.name}" — processing started.` });
-      onStarted?.(library.id);
-      // reset + close
-      setLocalFiles([]); setDriveFiles([]); setRescan(false);
-      onClose();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Something went wrong.";
-      setError(msg);
-      onLog?.({ level: "error", message: "Add files failed", details: e });
-    } finally {
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || j.error) throw new Error(j.error || `Check failed (HTTP ${res.status})`);
+      const dups: string[] = j.duplicates || [];
       setSubmitting(false);
+      if (dups.length > 0) {
+        setPendingDuplicates(dups);
+        return;
+      }
+      void proceed("none", []);
+    } catch (e) {
+      setSubmitting(false);
+      setError(e instanceof Error ? e.message : "Couldn't check for duplicates.");
     }
-  }, [submitting, total, localFiles, driveFiles, rescan, organizationId, library, currentUserId, onStarted, onClose, onLog]);
+  }, [submitting, total, localFiles, driveFiles, organizationId, library, currentUserId, proceed]);
 
   if (!open) return null;
 
@@ -177,7 +222,7 @@ export default function AddFilesModal({
         >
           <FiUploadCloud className="mx-auto h-6 w-6 text-violet-300" />
           <p className="mt-2 text-sm text-white/80">Drag files here, or <span className="text-violet-300">browse your computer</span></p>
-          <p className="mt-0.5 text-[11px] text-white/35">PDF, Word, Excel, CSV, images, and more</p>
+          <p className="mt-0.5 text-[11px] text-white/35">PDF, Word, Excel, CSV, images, code files, and more</p>
           <input
             ref={fileInputRef}
             type="file"
@@ -187,25 +232,29 @@ export default function AddFilesModal({
           />
         </div>
 
-        {/* Google Drive (owner only — members can't use the owner's Drive connection) */}
-        {allowDrive ? (
+        {/* Google Drive */}
+        {(allowDrivePicker || allowRescan) ? (
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void pickDrive()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:text-white"
-            >
-              <FiHardDrive className="h-3.5 w-3.5 text-violet-300" /> Pick Google Drive files
-            </button>
-            <button
-              type="button"
-              onClick={() => setRescan((v) => !v)}
-              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition ${
-                rescan ? "border-violet-400/50 bg-violet-500/15 text-white" : "border-white/10 bg-white/5 text-white/80 hover:text-white"
-              }`}
-            >
-              <FiRefreshCw className="h-3.5 w-3.5" /> Re-scan connected folder
-            </button>
+            {allowDrivePicker ? (
+              <button
+                type="button"
+                onClick={() => void pickDrive()}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:text-white"
+              >
+                <FiHardDrive className="h-3.5 w-3.5 text-violet-300" /> Pick Google Drive files
+              </button>
+            ) : null}
+            {allowRescan ? (
+              <button
+                type="button"
+                onClick={() => setRescan((v) => !v)}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition ${
+                  rescan ? "border-violet-400/50 bg-violet-500/15 text-white" : "border-white/10 bg-white/5 text-white/80 hover:text-white"
+                }`}
+              >
+                <FiRefreshCw className="h-3.5 w-3.5" /> Re-scan connected folder
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -232,18 +281,48 @@ export default function AddFilesModal({
 
         {error && <p className="mt-3 text-xs text-rose-300">{error}</p>}
 
-        <div className="mt-4 flex items-center justify-end gap-2">
-          <button onClick={() => !submitting && onClose()} className="rounded-lg px-3 py-2 text-xs text-white/60 hover:text-white">
-            Cancel
-          </button>
-          <button
-            onClick={() => void submit()}
-            disabled={submitting || total === 0}
-            className="btn-grad inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-medium text-white disabled:opacity-50"
-          >
-            {submitting ? <><FiLoader className="h-3.5 w-3.5 animate-spin" /> Adding…</> : "Add & process"}
-          </button>
-        </div>
+        {/* Duplicate prompt */}
+        {pendingDuplicates && pendingDuplicates.length > 0 ? (
+          <div className="mt-3 rounded-xl border border-amber-400/25 bg-amber-500/10 p-3">
+            <div className="flex items-center gap-2 text-xs font-medium text-amber-200">
+              <FiAlertTriangle className="h-3.5 w-3.5" />
+              {pendingDuplicates.length} file{pendingDuplicates.length > 1 ? "s" : ""} already exist in this library
+            </div>
+            <div className="mt-1.5 max-h-16 overflow-auto text-[11px] text-white/55">
+              {pendingDuplicates.join(", ")}
+            </div>
+            <div className="mt-2.5 flex flex-wrap justify-end gap-2">
+              <button onClick={() => setPendingDuplicates(null)} className="rounded-lg px-3 py-1.5 text-xs text-white/60 hover:text-white">
+                Cancel
+              </button>
+              <button
+                onClick={() => void proceed("skip", pendingDuplicates)}
+                className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:text-white"
+              >
+                Skip duplicates
+              </button>
+              <button
+                onClick={() => void proceed("replace", pendingDuplicates)}
+                className="rounded-lg border border-amber-400/40 bg-amber-500/15 px-3 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-500/25"
+              >
+                Replace
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 flex items-center justify-end gap-2">
+            <button onClick={() => !submitting && onClose()} className="rounded-lg px-3 py-2 text-xs text-white/60 hover:text-white">
+              Cancel
+            </button>
+            <button
+              onClick={() => void onAddClick()}
+              disabled={submitting || total === 0}
+              className="btn-grad inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-medium text-white disabled:opacity-50"
+            >
+              {submitting ? <><FiLoader className="h-3.5 w-3.5 animate-spin" /> Adding…</> : "Add & process"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
