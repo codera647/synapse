@@ -283,6 +283,13 @@ body {
 
 @keyframes scaleIn { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
 
+/* Usage page loading skeleton — bars rise and fall like a live chart filling in */
+@keyframes usageBar {
+  0%, 100% { transform: scaleY(0.32); opacity: 0.4; }
+  50%      { transform: scaleY(1);    opacity: 0.85; }
+}
+.usage-bar { transform-origin: bottom; will-change: transform, opacity; animation: usageBar 1.4s ease-in-out infinite; }
+
 /* Scroll reveal (driven by IntersectionObserver adding .is-visible) */
 .reveal {
   opacity: 0;
@@ -297,7 +304,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .reveal { opacity: 1; transform: none; transition: none; }
-  .animate-float, .gradient-text-animated, .shimmer { animation: none; }
+  .animate-float, .gradient-text-animated, .shimmer, .usage-bar { animation: none; }
   html { scroll-behavior: auto; }
 }
 

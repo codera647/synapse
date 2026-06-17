@@ -14,11 +14,13 @@ type Metric = "queries" | "documents" | "agentRuns" | "graphs";
 type DocRow = { file_size_bytes: number | null; created_at: string | null };
 type RunRow = { created_at: string | null; status: string | null };
 type GraphRow = { created_at: string | null; status: string | null; node_count: number | null; edge_count: number | null };
+type MsgRow = { role: string | null; content: string | null; created_at: string | null };
 
 type Raw = {
   docs: DocRow[];
-  queriesTs: string[];
+  chatMsgs: MsgRow[];
   runs: RunRow[];
+  agentMsgs: MsgRow[];
   graphs: GraphRow[];
   librariesCount: number;
   chunksCount: number;
@@ -74,6 +76,22 @@ function fmtBytes(bytes: number): string {
 }
 const fmtNum = (n: number) => n.toLocaleString();
 
+// Rough token estimate (~4 chars/token) — used for the "estimated" meter since no per-model
+// token logging exists yet.
+const approxTokens = (s: string | null | undefined) => Math.ceil((s?.length || 0) / 4);
+
+function fmtCompact(n: number): string {
+  if (n < 1000) return String(Math.round(n));
+  const u = ["", "K", "M", "B"];
+  let i = 0;
+  let v = n;
+  while (v >= 1000 && i < u.length - 1) {
+    v /= 1000;
+    i++;
+  }
+  return `${v >= 100 ? Math.round(v) : v.toFixed(1)}${u[i]}`;
+}
+
 export default function UsageWorkspace({
   supabase,
   organization,
@@ -119,17 +137,24 @@ export default function UsageWorkspace({
         : addDays(startOfDay(now), -29)
       ).toISOString();
 
-      const [docsR, libsR, chunksR, queriesR, runsR, graphsR, artsR, orgR] = await Promise.all([
+      const [docsR, libsR, chunksR, chatR, runsR, agentMsgsR, graphsR, artsR, orgR] = await Promise.all([
         supabase.from("documents").select("file_size_bytes, created_at").eq("organization_id", orgId),
         supabase.from("libraries").select("*", { count: "exact", head: true }).eq("organization_id", orgId),
         supabase.from("chunk_embeddings").select("*", { count: "exact", head: true }).eq("organization_id", orgId),
+        // Pull role + content (windowed) so we can both count queries and estimate token volume.
         supabase
           .from("chat_messages")
-          .select("created_at")
+          .select("role, content, created_at")
           .eq("organization_id", orgId)
-          .eq("role", "user")
-          .gte("created_at", windowStart),
+          .gte("created_at", windowStart)
+          .limit(8000),
         supabase.from("agent_runs").select("created_at, status").eq("organization_id", orgId).gte("created_at", windowStart),
+        supabase
+          .from("agent_messages")
+          .select("role, content, created_at")
+          .eq("organization_id", orgId)
+          .gte("created_at", windowStart)
+          .limit(8000),
         supabase.from("kg_graphs").select("created_at, status, node_count, edge_count").eq("organization_id", orgId),
         supabase.from("agent_artifacts").select("*", { count: "exact", head: true }).eq("organization_id", orgId),
         supabase.from("organizations").select("plan").eq("id", orgId).maybeSingle(),
@@ -138,8 +163,9 @@ export default function UsageWorkspace({
       setPlan(String((orgR.data as { plan?: string } | null)?.plan || "free"));
       setRaw({
         docs: ((docsR.data as DocRow[]) || []).map((d) => ({ file_size_bytes: d.file_size_bytes, created_at: d.created_at })),
-        queriesTs: ((queriesR.data as Array<{ created_at: string | null }>) || []).map((r) => r.created_at || "").filter(Boolean),
+        chatMsgs: (chatR.data as MsgRow[]) || [],
         runs: (runsR.data as RunRow[]) || [],
+        agentMsgs: (agentMsgsR.data as MsgRow[]) || [],
         graphs: (graphsR.data as GraphRow[]) || [],
         librariesCount: libsR.count ?? 0,
         chunksCount: chunksR.count ?? 0,
@@ -166,7 +192,9 @@ export default function UsageWorkspace({
     const docsTs = (raw?.docs || []).map((d) => d.created_at || "").filter(Boolean);
     const runsTs = (raw?.runs || []).map((r) => r.created_at || "").filter(Boolean);
     const graphsTs = (raw?.graphs || []).map((g) => g.created_at || "").filter(Boolean);
-    const queriesTs = raw?.queriesTs || [];
+    const chatMsgs = raw?.chatMsgs || [];
+    const agentMsgs = raw?.agentMsgs || [];
+    const queriesTs = chatMsgs.filter((m) => m.role === "user").map((m) => m.created_at || "").filter(Boolean);
 
     const metricTs: Record<Metric, string[]> = { queries: queriesTs, documents: docsTs, agentRuns: runsTs, graphs: graphsTs };
 
@@ -178,12 +206,32 @@ export default function UsageWorkspace({
     const edges = (raw?.graphs || []).reduce((s, g) => s + (g.edge_count || 0), 0);
     const graphsDone = (raw?.graphs || []).filter((g) => g.status === "done").length;
 
+    // ---- estimated token / request meter (range-aware) ----
+    const inRange = (m: MsgRow) => !!m.created_at && new Date(m.created_at) >= rangeStart;
+    const chatR = chatMsgs.filter(inRange);
+    const agentR = agentMsgs.filter(inRange);
+    const chatRequests = chatR.filter((m) => m.role === "assistant").length;
+    const chatTokens = chatR.reduce((s, m) => s + approxTokens(m.content), 0);
+    const agentRequests = agentR.filter((m) => m.role === "assistant").length;
+    const agentTokens = agentR.reduce((s, m) => s + approxTokens(m.content), 0);
+    const meterRows = [
+      { label: "Chat", color: METRICS.queries.color, requests: chatRequests, tokens: chatTokens },
+      { label: "Agent", color: METRICS.agentRuns.color, requests: agentRequests, tokens: agentTokens },
+    ];
+    const meter = {
+      rows: meterRows,
+      maxTokens: Math.max(1, ...meterRows.map((r) => r.tokens)),
+      totalRequests: chatRequests + agentRequests,
+      totalTokens: chatTokens + agentTokens,
+    };
+
     return {
       rangeStart,
       heroSeries: series(metric),
       heroTotal: periodTotal(metric),
       series,
       periodTotal,
+      meter,
       month: {
         queries: countSince(queriesTs, monthStart),
         runs: countSince(runsTs, monthStart),
@@ -236,7 +284,7 @@ export default function UsageWorkspace({
       </div>
 
       {loading ? (
-        <div className="flex flex-1 items-center justify-center text-sm text-white/40">Loading usage…</div>
+        <UsageSkeleton />
       ) : (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
           {/* main column */}
@@ -326,12 +374,27 @@ export default function UsageWorkspace({
               </div>
             </div>
 
-            {/* placeholder for Step 2 token/request metering */}
-            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-5">
-              <h2 className="text-sm font-semibold text-white/55">Tokens &amp; requests</h2>
-              <p className="mt-1 text-xs text-white/35">
-                Per-model token and request metering becomes available once usage logging is enabled.
-              </p>
+            {/* Tokens & requests — estimated from message volume */}
+            <div className="rounded-2xl glass glass-hi p-5">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-white/90">Tokens &amp; requests</h2>
+                <span
+                  title="Approximated from message volume (~4 chars per token). No per-model token logging yet."
+                  className="rounded-full border border-white/10 bg-white/5 px-2 py-[2px] text-[9px] font-semibold uppercase tracking-wide text-white/40"
+                >
+                  est.
+                </span>
+              </div>
+              <p className="mb-3 text-[11px] text-white/35">Approx. model usage from message volume, {rangeLabel}.</p>
+              <div className="mb-4 grid grid-cols-2 gap-3">
+                <StatTile label="Model requests" value={fmtNum(view.meter.totalRequests)} />
+                <StatTile label="Est. tokens" value={fmtCompact(view.meter.totalTokens)} />
+              </div>
+              <div className="space-y-2.5">
+                {view.meter.rows.map((r) => (
+                  <TokenRow key={r.label} {...r} max={view.meter.maxTokens} />
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -404,6 +467,129 @@ function StatTile({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5">
       <p className="text-[11px] text-white/40">{label}</p>
       <p className="mt-0.5 text-base font-semibold tracking-tight">{value}</p>
+    </div>
+  );
+}
+
+function TokenRow({
+  label,
+  color,
+  requests,
+  tokens,
+  max,
+}: {
+  label: string;
+  color: string;
+  requests: number;
+  tokens: number;
+  max: number;
+}) {
+  const pct = max > 0 ? Math.max(tokens > 0 ? 4 : 0, (tokens / max) * 100) : 0;
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between text-[11px]">
+        <span className="flex items-center gap-1.5 text-white/70">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+          {label}
+        </span>
+        <span className="tabular-nums text-white/45">
+          {fmtNum(requests)} req <span className="text-white/25">·</span> {fmtCompact(tokens)} tok
+        </span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/8">
+        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: color }} />
+      </div>
+    </div>
+  );
+}
+
+// ---- loading skeleton -------------------------------------------------------
+function SkeletonBars({ count, height, gap = "gap-1.5" }: { count: number; height: string; gap?: string }) {
+  // Deterministic heights (no Math.random → no hydration mismatch); each bar pulses on a stagger.
+  return (
+    <div className={`flex items-end ${gap} ${height}`}>
+      {Array.from({ length: count }).map((_, i) => (
+        <div
+          key={i}
+          className="usage-bar flex-1 rounded-t bg-gradient-to-t from-violet-500/30 to-fuchsia-400/20"
+          style={{ height: `${22 + ((i * 37) % 78)}%`, animationDelay: `${(i % 12) * 70}ms` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function UsageSkeleton() {
+  return (
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+      {/* main column */}
+      <div className="space-y-5 lg:col-span-2">
+        <div className="rounded-2xl glass glass-hi p-5">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div className="space-y-2">
+              <div className="h-3 w-28 animate-pulse rounded bg-white/10" />
+              <div className="h-7 w-24 animate-pulse rounded bg-white/10" />
+            </div>
+            <div className="flex flex-wrap justify-end gap-1">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="h-6 w-16 animate-pulse rounded-full bg-white/8" style={{ animationDelay: `${i * 90}ms` }} />
+              ))}
+            </div>
+          </div>
+          <SkeletonBars count={28} height="h-[240px]" />
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="rounded-2xl glass glass-hi p-4">
+              <div className="flex items-baseline justify-between">
+                <div className="h-3.5 w-20 animate-pulse rounded bg-white/10" />
+                <div className="h-4 w-10 animate-pulse rounded bg-white/10" />
+              </div>
+              <div className="mt-1.5 h-2.5 w-28 animate-pulse rounded bg-white/8" />
+              <div className="mt-3">
+                <SkeletonBars count={16} height="h-[52px]" gap="gap-1" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* right rail */}
+      <div className="space-y-5">
+        <div className="space-y-3.5 rounded-2xl glass glass-hi p-5">
+          <div className="h-3.5 w-28 animate-pulse rounded bg-white/10" />
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="space-y-1.5">
+              <div className="flex justify-between">
+                <div className="h-2.5 w-24 animate-pulse rounded bg-white/8" />
+                <div className="h-2.5 w-12 animate-pulse rounded bg-white/8" />
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-white/8">
+                <div className="h-full animate-pulse rounded-full bg-white/15" style={{ width: `${28 + i * 13}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="rounded-2xl glass glass-hi p-5">
+          <div className="mb-3 h-3.5 w-16 animate-pulse rounded bg-white/10" />
+          <div className="grid grid-cols-2 gap-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-14 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]" style={{ animationDelay: `${i * 60}ms` }} />
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl glass glass-hi p-5">
+          <div className="mb-3 h-3.5 w-32 animate-pulse rounded bg-white/10" />
+          <div className="space-y-2.5">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="h-6 w-full animate-pulse rounded bg-white/8" style={{ animationDelay: `${i * 120}ms` }} />
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
