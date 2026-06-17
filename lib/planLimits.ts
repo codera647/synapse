@@ -22,7 +22,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
   free: {
     label: "Free",
     libraries: 5,
-    documents: 100,
+    documents: 150,
     storageBytes: 1 * GB,
     monthlyQueries: 500,
     monthlyAgentRuns: 100,

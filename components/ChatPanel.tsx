@@ -22,6 +22,9 @@ import {
   FiRefreshCw,
   FiShare2,
 } from "react-icons/fi";
+import { countMonthQueries, getOrgPlan } from "@/lib/usage";
+import { planLimits } from "@/lib/planLimits";
+import LimitReachedDialog, { type LimitInfo } from "@/components/LimitReachedDialog";
 
 /** Map any chat failure (HTTP status + payload) to a short, friendly user message.
  *  Technical details still go to the log panel; the user only sees this. */
@@ -272,6 +275,8 @@ export default function ChatPanel({
   // True while context-window auto-compaction is summarizing a full chat and spawning the
   // linked continuation thread — drives the "starting a linked chat…" loading banner.
   const [compacting, setCompacting] = useState(false);
+  const [limitInfo, setLimitInfo] = useState<LimitInfo | null>(null);
+  const [limitPlanLabel, setLimitPlanLabel] = useState("Free");
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("medium");
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -966,6 +971,28 @@ export default function ChatPanel({
     if (!sourceText.trim()) return;
     if (thinking) return;
 
+    // Enforce the org's monthly query allowance before sending.
+    if (organization?.id) {
+      try {
+        const [plan, used] = await Promise.all([
+          getOrgPlan(supabase, organization.id),
+          countMonthQueries(supabase, organization.id),
+        ]);
+        const lim = planLimits(plan);
+        if (Number.isFinite(lim.monthlyQueries) && used >= lim.monthlyQueries) {
+          setLimitPlanLabel(lim.label);
+          setLimitInfo({
+            title: "Monthly question limit reached",
+            message: `Your ${lim.label} plan includes ${lim.monthlyQueries.toLocaleString()} questions per month. Your allowance refreshes at the start of next month, or upgrade for more.`,
+            used, limit: lim.monthlyQueries, unit: "this month",
+          });
+          return;
+        }
+      } catch {
+        /* if the usage check fails, don't block the user */
+      }
+    }
+
     let tid = await ensureThread();
     if (!tid) {
       onLog?.({ level: "error", message: "Chat: unable to create a thread (auth/org missing)" });
@@ -1491,6 +1518,7 @@ export default function ChatPanel({
 
   return (
     <div className="relative flex h-full overflow-hidden rounded-2xl surface-panel shadow-[0_18px_70px_rgba(0,0,0,0.35)]">
+      <LimitReachedDialog info={limitInfo} planLabel={limitPlanLabel} onClose={() => setLimitInfo(null)} />
       {/* History rail (ChatGPT-style) */}
       {historyOpen ? (
         <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-white/10 bg-black/15">

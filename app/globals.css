@@ -281,6 +281,8 @@ body {
   .gen-shimmer-text { -webkit-text-fill-color: #c4b5fd; color: #c4b5fd; }
 }
 
+@keyframes scaleIn { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
+
 /* Scroll reveal (driven by IntersectionObserver adding .is-visible) */
 .reveal {
   opacity: 0;

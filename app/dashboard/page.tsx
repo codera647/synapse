@@ -17,6 +17,9 @@ import KnowledgeGraphWorkspace from "@/components/KnowledgeGraphWorkspace";
 import TeamWorkspace from "@/components/TeamWorkspace";
 import UsageWorkspace from "@/components/UsageWorkspace";
 import AddFilesModal from "@/components/AddFilesModal";
+import LimitReachedDialog, { type LimitInfo } from "@/components/LimitReachedDialog";
+import { countLibraries, getOrgPlan } from "@/lib/usage";
+import { planLimits } from "@/lib/planLimits";
 import SettingsModal, { type Personalization } from "@/components/SettingsModal";
 
 type Library = {
@@ -79,6 +82,8 @@ function DashboardPageInner() {
     const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
     const [addFilesLib, setAddFilesLib] = useState<Library | null>(null);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    const [limitDialog, setLimitDialog] = useState<LimitInfo | null>(null);
+    const [limitPlanLabel, setLimitPlanLabel] = useState("Free");
     // Libraries (in the current org) the user has been granted write on, beyond ones they own.
     const [writeLibSet, setWriteLibSet] = useState<Set<string>>(new Set());
     const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -299,7 +304,28 @@ function DashboardPageInner() {
         setLoading(false);
     };
 
-    const openCreateLibrary = () => {
+    const openCreateLibrary = async () => {
+        if (currentOrg) {
+            try {
+                const [plan, libs] = await Promise.all([
+                    getOrgPlan(supabase, currentOrg.id),
+                    countLibraries(supabase, currentOrg.id),
+                ]);
+                const lim = planLimits(plan);
+                if (libs >= lim.libraries) {
+                    setLimitPlanLabel(lim.label);
+                    setLimitDialog({
+                        title: "Library limit reached",
+                        message: `Your ${lim.label} plan includes up to ${lim.libraries} libraries. Remove one you no longer need to make room, or upgrade for more.`,
+                        used: libs,
+                        limit: lim.libraries,
+                    });
+                    return;
+                }
+            } catch {
+                /* if the usage check fails, don't block the user */
+            }
+        }
         setCreateLibraryOpen(true);
         setCreateLibraryClosing(false);
     };
@@ -1488,6 +1514,16 @@ function DashboardPageInner() {
                     onLog={(e) => addLog({ level: e.level, source: "library", message: e.message, details: e.details })}
                 />
             )}
+
+            <LimitReachedDialog
+                info={limitDialog}
+                planLabel={limitPlanLabel}
+                onClose={() => setLimitDialog(null)}
+                onManage={() => {
+                    setLimitDialog(null);
+                    router.push("/dashboard?tab=usage");
+                }}
+            />
 
             {createLibraryOpen && (
                 <div className="fixed inset-0 z-40 flex items-start justify-center px-4 pt-16">

@@ -7,6 +7,18 @@ import {
 import {
   openGoogleDriveFilePicker, downloadDriveFile, driveFileName, type PickedDriveFile,
 } from "@/lib/googleDrivePicker";
+import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { countDocuments, sumStorageBytes, getOrgPlan } from "@/lib/usage";
+import { planLimits } from "@/lib/planLimits";
+import LimitReachedDialog, { type LimitInfo } from "@/components/LimitReachedDialog";
+
+function fmtBytes(n: number): string {
+  if (!Number.isFinite(n)) return "∞";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0; let v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
+}
 
 type LogFn = (e: { level: "info" | "warn" | "error" | "success"; message: string; details?: unknown }) => void;
 type StagedDrive = PickedDriveFile & { token: string };
@@ -39,7 +51,11 @@ export default function AddFilesModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingDuplicates, setPendingDuplicates] = useState<string[] | null>(null);
+  const [limitInfo, setLimitInfo] = useState<LimitInfo | null>(null);
+  const [limitPlanLabel, setLimitPlanLabel] = useState("Free");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const supabaseRef = useRef<ReturnType<typeof createSupabaseBrowserClient> | null>(null);
+  if (!supabaseRef.current) supabaseRef.current = createSupabaseBrowserClient();
 
   const addLocal = useCallback((files: FileList | File[]) => {
     const incoming = Array.from(files);
@@ -151,6 +167,41 @@ export default function AddFilesModal({
     if (submitting || total === 0) return;
     setError(null);
     const candidateNames = [...localFiles.map((f) => f.name), ...driveFiles.map((d) => driveFileName(d))];
+
+    // Enforce the org's plan limits before doing any work.
+    const sb = supabaseRef.current;
+    if (sb) {
+      try {
+        const [plan, docs, used] = await Promise.all([
+          getOrgPlan(sb, organizationId),
+          countDocuments(sb, organizationId),
+          sumStorageBytes(sb, organizationId),
+        ]);
+        const lim = planLimits(plan);
+        setLimitPlanLabel(lim.label);
+        const adding = candidateNames.length; // re-scan count is unknown; counted server-side
+        if (Number.isFinite(lim.documents) && docs + adding > lim.documents) {
+          setLimitInfo({
+            title: "Document limit reached",
+            message: `Your ${lim.label} plan covers up to ${lim.documents.toLocaleString()} documents and you already have ${docs.toLocaleString()}. Remove some files or upgrade to add more.`,
+            used: docs, limit: lim.documents, unit: "docs",
+          });
+          return;
+        }
+        const stagedBytes = localFiles.reduce((n, f) => n + (f.size || 0), 0);
+        if (Number.isFinite(lim.storageBytes) && used + stagedBytes > lim.storageBytes) {
+          setLimitInfo({
+            title: "Storage limit reached",
+            message: `Your ${lim.label} plan includes ${fmtBytes(lim.storageBytes)} of storage and you're using ${fmtBytes(used)}. Free up space or upgrade to add more.`,
+            used, limit: lim.storageBytes, fmt: fmtBytes,
+          });
+          return;
+        }
+      } catch {
+        /* if the usage check fails, don't block the user */
+      }
+    }
+
     if (candidateNames.length === 0) {
       // only a re-scan staged — nothing to pre-check
       void proceed("none", []);
@@ -186,6 +237,12 @@ export default function AddFilesModal({
   if (!open) return null;
 
   return (
+    <>
+    <LimitReachedDialog
+      info={limitInfo}
+      planLabel={limitPlanLabel}
+      onClose={() => setLimitInfo(null)}
+    />
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-[2px]"
       onClick={() => !submitting && onClose()}
@@ -325,6 +382,7 @@ export default function AddFilesModal({
         )}
       </div>
     </div>
+    </>
   );
 }
 

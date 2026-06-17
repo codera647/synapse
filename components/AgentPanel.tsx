@@ -9,6 +9,9 @@ import AgentArtifact, { type AgentArtifactData } from "@/components/AgentArtifac
 import { GeneratingIndicator } from "@/components/AgentStatus";
 import AgentArtifactsDrawer from "@/components/AgentArtifactsDrawer";
 import ChatMarkdown from "@/components/ChatMarkdown";
+import LimitReachedDialog, { type LimitInfo } from "@/components/LimitReachedDialog";
+import { countMonthAgentRuns, getOrgPlan } from "@/lib/usage";
+import { planLimits } from "@/lib/planLimits";
 
 type OrgLite = { id: string; name: string };
 type LibraryLite = { id: string; name: string };
@@ -61,6 +64,8 @@ export default function AgentPanel({
   const [messages, setMessages] = useState<AgentMsg[]>([]);
   const [runId, setRunId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [limitInfo, setLimitInfo] = useState<LimitInfo | null>(null);
+  const [limitPlanLabel, setLimitPlanLabel] = useState("Free");
   const [status, setStatus] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [runs, setRuns] = useState<RunLite[]>([]);
@@ -244,6 +249,27 @@ export default function AgentPanel({
   const run = async (override?: string) => {
     const text = (override ?? prompt).trim();
     if (!text || running || !organization?.id) return;
+
+    // Enforce the org's monthly agent-run allowance before starting.
+    try {
+      const [plan, used] = await Promise.all([
+        getOrgPlan(supabase, organization.id),
+        countMonthAgentRuns(supabase, organization.id),
+      ]);
+      const lim = planLimits(plan);
+      if (Number.isFinite(lim.monthlyAgentRuns) && used >= lim.monthlyAgentRuns) {
+        setLimitPlanLabel(lim.label);
+        setLimitInfo({
+          title: "Monthly agent limit reached",
+          message: `Your ${lim.label} plan includes ${lim.monthlyAgentRuns.toLocaleString()} agent runs per month. Your allowance refreshes at the start of next month, or upgrade for more.`,
+          used, limit: lim.monthlyAgentRuns, unit: "this month",
+        });
+        return;
+      }
+    } catch {
+      /* if the usage check fails, don't block the user */
+    }
+
     const rid = (crypto as { randomUUID?: () => string }).randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
     const msgSources =
       selectedLibNames.length || uploads.length
@@ -333,6 +359,7 @@ export default function AgentPanel({
 
   return (
     <div className="flex h-full flex-col">
+      <LimitReachedDialog info={limitInfo} planLabel={limitPlanLabel} onClose={() => setLimitInfo(null)} />
       {/* Top controls */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
         {/* Library picker */}
