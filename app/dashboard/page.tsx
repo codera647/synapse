@@ -13,6 +13,7 @@ import { LogProvider, useLog } from "@/context/LogContext";
 import LibraryDrawer from "@/components/LibraryDrawer";
 import ChatWorkspace from "@/components/ChatWorkspace";
 import AgentWorkspace from "@/components/AgentWorkspace";
+import KnowledgeGraphWorkspace from "@/components/KnowledgeGraphWorkspace";
 import TeamWorkspace from "@/components/TeamWorkspace";
 import SettingsModal, { type Personalization } from "@/components/SettingsModal";
 
@@ -1151,12 +1152,21 @@ function DashboardPageInner() {
 
                 {/* Main content */}
                 <main
-                    className={`flex-1 w-full px-6 ml-16 ${activeTab === "chat" || activeTab === "agent"
+                    className={`flex-1 w-full px-6 ml-16 ${activeTab === "chat" || activeTab === "agent" || activeTab === "graph"
                         ? "max-w-none mx-0 pr-10 pt-3 pb-4"
                         : "max-w-6xl mx-auto pt-8 pb-10"
                         }`}
                 >
-                    {activeTab === "agent" ? (
+                    {activeTab === "graph" ? (
+                        <KnowledgeGraphWorkspace
+                            supabase={supabase}
+                            organization={currentOrg ? { id: currentOrg.id, name: currentOrg.name } : null}
+                            libraries={libraries}
+                            onLog={(e) =>
+                                addLog({ level: e.level, source: "graph", message: e.message, details: e.details })
+                            }
+                        />
+                    ) : activeTab === "agent" ? (
                         <AgentWorkspace
                             supabase={supabase}
                             organization={currentOrg ? { id: currentOrg.id, name: currentOrg.name } : null}

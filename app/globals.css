@@ -241,6 +241,14 @@ body {
   animation: shimmer 2.2s linear infinite;
 }
 
+/* Knowledge-graph build animation (glowing constellation forming). */
+@keyframes kg-pulse { 0%, 100% { opacity: 0.45; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1.15); } }
+@keyframes kg-draw { from { stroke-dashoffset: 220; opacity: 0; } 60% { opacity: 0.7; } to { stroke-dashoffset: 0; opacity: 0.7; } }
+@keyframes kg-spin-slow { to { transform: rotate(360deg); } }
+.kg-node { transform-box: fill-box; transform-origin: center; animation: kg-pulse 2.4s ease-in-out infinite; }
+.kg-edge { stroke-dasharray: 220; animation: kg-draw 3s ease-in-out infinite; }
+.kg-rotate { transform-box: fill-box; transform-origin: center; animation: kg-spin-slow 40s linear infinite; }
+
 /* Agent image-generation placeholder (GPT-style shimmering reveal). */
 .agent-img-shimmer {
   background: linear-gradient(110deg, rgba(26,23,48,0.92) 25%, rgba(91,52,153,0.55) 45%, rgba(26,23,48,0.92) 65%);

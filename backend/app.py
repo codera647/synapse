@@ -43,6 +43,11 @@ try:
 except Exception:  # pragma: no cover
     agent_router = None
 
+try:
+    from kg_api import router as kg_router  # type: ignore
+except Exception:  # pragma: no cover
+    kg_router = None
+
 
 app = FastAPI(title="Synapse Backend", version="1.0.0")
 
@@ -104,6 +109,9 @@ if pipeline_router is not None:
 
 if agent_router is not None:
     app.include_router(agent_router)
+
+if kg_router is not None:
+    app.include_router(kg_router)
 
 
 _worker_stop = None
