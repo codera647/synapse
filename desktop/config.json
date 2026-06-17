@@ -1,0 +1,4 @@
+{
+  "//": "The URL the desktop app loads. Defaults to the deployed Synapse web app. Use http://localhost:3000 for local development, or override at runtime with the SYNAPSE_APP_URL environment variable.",
+  "appUrl": "https://synapse-web.nex-gen-3023.workers.dev/"
+}

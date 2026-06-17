@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { openGoogleDriveFolderPicker } from "@/lib/googleDrivePicker";
 import DashboardNavbar from "@/components/DashboardNavbar";
-import { FiGrid, FiList, FiSearch, FiPlus } from "react-icons/fi";
+import { FiGrid, FiList, FiSearch, FiPlus, FiFolder } from "react-icons/fi";
 import DashboardSidebar from "@/components/DashboardSidebar";
 import LibrariesSkeleton from "@/components/LibrariesSkeleton";
 import { ChatSkeleton, AgentSkeleton, GraphSkeleton, UsageSkeleton } from "@/components/WorkspaceSkeletons";
@@ -20,6 +20,7 @@ import UsageWorkspace from "@/components/UsageWorkspace";
 import AddFilesModal from "@/components/AddFilesModal";
 import LimitReachedDialog, { type LimitInfo } from "@/components/LimitReachedDialog";
 import { countLibraries, getUserOrgIds, getUserPlan } from "@/lib/usage";
+import { getDesktop, isDesktop, uploadLocalFolder, type DesktopFile } from "@/lib/desktop";
 import { planLimits } from "@/lib/planLimits";
 import SettingsModal, { type Personalization } from "@/components/SettingsModal";
 
@@ -101,6 +102,11 @@ function DashboardPageInner() {
     const [newLibrarySourceFolderName, setNewLibrarySourceFolderName] = useState("");
     const [createLibraryLoading, setCreateLibraryLoading] = useState(false);
     const [createLibraryError, setCreateLibraryError] = useState<string | null>(null);
+    // Desktop (Electron) mode: create libraries from a LOCAL folder instead of Google Drive.
+    const [desktop, setDesktop] = useState(false);
+    const [localFolder, setLocalFolder] = useState<{ path: string; name: string } | null>(null);
+    const [localFiles, setLocalFiles] = useState<DesktopFile[]>([]);
+    const [localUploadProgress, setLocalUploadProgress] = useState<{ done: number; total: number } | null>(null);
     const [activeLibrary, setActiveLibrary] = useState<Library | null>(null);
     const [syncLoading, setSyncLoading] = useState(false);
     const [syncError, setSyncError] = useState<string | null>(null);
@@ -344,6 +350,9 @@ function DashboardPageInner() {
         setNewLibrarySourceFolderName("");
         setCreateLibraryError(null);
         setCreateLibraryLoading(false);
+        setLocalFolder(null);
+        setLocalFiles([]);
+        setLocalUploadProgress(null);
     };
 
     const handleCreateLibrary = async (e: React.FormEvent) => {
@@ -365,6 +374,64 @@ function DashboardPageInner() {
         const { data: ownerRes } = await supabase.auth.getUser();
         const ownerUserId = ownerRes?.user?.id ?? null;
 
+        const librarySelect =
+            "id, name, status, created_at, updated_at, source_type, pipeline_status, pipeline_stage, pipeline_progress_percent, pipeline_error, total_batches, completed_batches, created_by_user_id";
+
+        // ── Desktop: build the library from a LOCAL folder (upload its files + process them) ──
+        const api = getDesktop();
+        if (desktop && api) {
+            if (!localFolder || localFiles.length === 0) {
+                setCreateLibraryError("Choose a folder that contains supported files.");
+                setCreateLibraryLoading(false);
+                return;
+            }
+            const { data, error } = await supabase
+                .from("libraries")
+                .insert({
+                    organization_id: currentOrg.id,
+                    created_by_user_id: ownerUserId,
+                    name: newLibraryName.trim(),
+                    source_type: "local",
+                    source_folder_id: localFolder.path,
+                })
+                .select(librarySelect)
+                .single();
+            if (error || !data) {
+                setCreateLibraryError(error?.message || "Couldn't create the library.");
+                setCreateLibraryLoading(false);
+                return;
+            }
+            const libraryId = String((data as Library).id);
+            try {
+                setLocalUploadProgress({ done: 0, total: localFiles.length });
+                await uploadLocalFolder({
+                    api,
+                    organizationId: currentOrg.id,
+                    libraryId,
+                    userId: ownerUserId,
+                    files: localFiles,
+                    onProgress: (done, total) => setLocalUploadProgress({ done, total }),
+                });
+            } catch (e) {
+                // The library row exists but upload/processing didn't start — surface it, keep the row
+                // so the user can retry from the card.
+                setLibraries((prev) => [data as Library, ...prev]);
+                setCreateLibraryError(e instanceof Error ? e.message : "Upload failed.");
+                setCreateLibraryLoading(false);
+                setLocalUploadProgress(null);
+                return;
+            }
+            setLibraries((prev) => [
+                { ...(data as Library), pipeline_status: "queued", status: "processing", pipeline_error: null } as Library,
+                ...prev,
+            ]);
+            startLibraryStatusPolling(libraryId);
+            setLocalUploadProgress(null);
+            setCreateLibraryLoading(false);
+            closeCreateLibrary();
+            return;
+        }
+
         const { data, error } = await supabase
             .from("libraries")
             .insert({
@@ -374,7 +441,7 @@ function DashboardPageInner() {
                 source_type: "google_drive",
                 source_folder_id: newLibrarySourceFolder.trim(),
             })
-            .select("id, name, status, created_at, updated_at, source_type, pipeline_status, pipeline_stage, pipeline_progress_percent, pipeline_error, total_batches, completed_batches, created_by_user_id")
+            .select(librarySelect)
             .single();
 
         if (error) {
@@ -405,6 +472,42 @@ function DashboardPageInner() {
             console.error("Google Drive picker error:", err);
         }
     };
+
+    // Desktop (Electron) only: pick a local folder and stage its supported files.
+    const handlePickLocalFolder = async () => {
+        const api = getDesktop();
+        if (!api) return;
+        setCreateLibraryError(null);
+        try {
+            const folder = await api.pickFolder();
+            if (!folder) return;
+            const { files, error } = await api.listFolder(folder.path);
+            if (error) {
+                setCreateLibraryError(error);
+                return;
+            }
+            if (!files.length) {
+                setLocalFolder(null);
+                setLocalFiles([]);
+                setNewLibrarySourceFolder("");
+                setNewLibrarySourceFolderName("");
+                setCreateLibraryError("No supported files found in that folder.");
+                return;
+            }
+            setLocalFolder(folder);
+            setLocalFiles(files);
+            // Reuse the existing required-folder field so the form's validation/submit logic still applies.
+            setNewLibrarySourceFolder(folder.path);
+            setNewLibrarySourceFolderName(`${folder.name} · ${files.length} file${files.length === 1 ? "" : "s"}`);
+            if (!newLibraryName.trim()) setNewLibraryName(folder.name);
+        } catch (err) {
+            setCreateLibraryError(err instanceof Error ? err.message : "Couldn't read that folder.");
+        }
+    };
+
+    useEffect(() => {
+        setDesktop(isDesktop());
+    }, []);
 
     const closeLibraryDetails = () => {
         setActiveLibrary(null);
@@ -1595,55 +1698,85 @@ function DashboardPageInner() {
                                 </p>
                             </div>
 
-                            <div>
-                                <label className="block text-sm font-medium text-gray-300 mb-2">
-                                    Source type
-                                </label>
-                                <div
-                                    className="w-full rounded-lg px-4 py-3 text-sm border border-white/10 bg-black/30 text-gray-100 transition-all hover:border-[#b87fd9]/60"
-                                >
-                                    Google Drive
-                                </div>
-                                <p className="mt-1.5 text-xs text-gray-500">
-                                    Only Google Drive is supported right now.
-                                </p>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-300 mb-2">
-                                    Source folder ID
-                                </label>
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        value={newLibrarySourceFolder}
-                                        onChange={(e) => setNewLibrarySourceFolder(e.target.value)}
-                                        type="text"
-                                        placeholder="1A2B3C4D5E"
-                                        className="w-full rounded-lg px-4 py-3 text-sm outline-none transition-all focus:ring-1 focus:ring-[#b87fd9] hover:border-[#b87fd9]/60"
-                                        style={{
-                                            backgroundColor: "var(--bg-primary)",
-                                            border: "1px solid var(--border-color-subtle)",
-                                            color: "var(--text-primary)",
-                                        }}
-                                        required
-                                    />
+                            {desktop ? (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                                        Folder
+                                    </label>
                                     <button
                                         type="button"
-                                        onClick={handlePickDriveFolder}
-                                        className="rounded-lg border border-white/20 bg-transparent px-4 py-3 text-sm font-medium text-gray-300 hover:bg-white/5 hover:border-[#b87fd9]/60 hover:text-white transition-all"
+                                        onClick={handlePickLocalFolder}
+                                        className="flex w-full items-center gap-3 rounded-lg border border-dashed border-white/20 bg-black/20 px-4 py-3 text-sm text-gray-300 transition-all hover:border-[#b87fd9]/60 hover:bg-white/5 hover:text-white"
                                     >
-                                        Pick folder
+                                        <FiFolder className="h-4 w-4 shrink-0 text-violet-300" />
+                                        {localFolder ? (
+                                            <span className="min-w-0 truncate">{localFolder.name}</span>
+                                        ) : (
+                                            <span>Choose a folder on this computer…</span>
+                                        )}
                                     </button>
-                                </div>
-                                <p className="mt-1.5 text-xs text-gray-500">
-                                    For Google Drive, paste the folder ID from the URL.
-                                </p>
-                                {newLibrarySourceFolderName && (
-                                    <p className="mt-1 text-xs text-gray-400">
-                                        Selected: {newLibrarySourceFolderName}
+                                    <p className="mt-1.5 text-xs text-gray-500">
+                                        Every supported file in the folder (and its subfolders) is uploaded and processed.
                                     </p>
-                                )}
-                            </div>
+                                    {localFolder && (
+                                        <p className="mt-1 text-xs text-gray-400">
+                                            {localFiles.length} supported file{localFiles.length === 1 ? "" : "s"} found
+                                        </p>
+                                    )}
+                                </div>
+                            ) : (
+                                <>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                                            Source type
+                                        </label>
+                                        <div
+                                            className="w-full rounded-lg px-4 py-3 text-sm border border-white/10 bg-black/30 text-gray-100 transition-all hover:border-[#b87fd9]/60"
+                                        >
+                                            Google Drive
+                                        </div>
+                                        <p className="mt-1.5 text-xs text-gray-500">
+                                            Only Google Drive is supported right now.
+                                        </p>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                                            Source folder ID
+                                        </label>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                value={newLibrarySourceFolder}
+                                                onChange={(e) => setNewLibrarySourceFolder(e.target.value)}
+                                                type="text"
+                                                placeholder="1A2B3C4D5E"
+                                                className="w-full rounded-lg px-4 py-3 text-sm outline-none transition-all focus:ring-1 focus:ring-[#b87fd9] hover:border-[#b87fd9]/60"
+                                                style={{
+                                                    backgroundColor: "var(--bg-primary)",
+                                                    border: "1px solid var(--border-color-subtle)",
+                                                    color: "var(--text-primary)",
+                                                }}
+                                                required
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={handlePickDriveFolder}
+                                                className="rounded-lg border border-white/20 bg-transparent px-4 py-3 text-sm font-medium text-gray-300 hover:bg-white/5 hover:border-[#b87fd9]/60 hover:text-white transition-all"
+                                            >
+                                                Pick folder
+                                            </button>
+                                        </div>
+                                        <p className="mt-1.5 text-xs text-gray-500">
+                                            For Google Drive, paste the folder ID from the URL.
+                                        </p>
+                                        {newLibrarySourceFolderName && (
+                                            <p className="mt-1 text-xs text-gray-400">
+                                                Selected: {newLibrarySourceFolderName}
+                                            </p>
+                                        )}
+                                    </div>
+                                </>
+                            )}
 
                             <div className="flex items-center justify-end gap-3 pt-2">
                                 {createLibraryError && (
@@ -1660,10 +1793,16 @@ function DashboardPageInner() {
                                 </button>
                                 <button
                                     type="submit"
-                                    disabled={!newLibraryName.trim() || !newLibrarySourceFolder.trim()}
+                                    disabled={createLibraryLoading || !newLibraryName.trim() || !newLibrarySourceFolder.trim()}
                                     className="btn-grad rounded-xl px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                                 >
-                                    {createLibraryLoading ? "Creating..." : "Create library"}
+                                    {createLibraryLoading
+                                        ? localUploadProgress
+                                            ? `Uploading ${localUploadProgress.done}/${localUploadProgress.total}…`
+                                            : "Creating..."
+                                        : desktop
+                                            ? "Create from folder"
+                                            : "Create library"}
                                 </button>
                             </div>
                         </form>
