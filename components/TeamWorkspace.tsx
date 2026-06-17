@@ -13,7 +13,10 @@ import {
   FiUserPlus,
   FiClock,
   FiChevronDown,
+  FiPlus,
+  FiSliders,
 } from "react-icons/fi";
+import AddFilesModal from "@/components/AddFilesModal";
 
 type OrgLite = { id: string; name: string };
 type TeamOrg = { id: string; name: string; role: string };
@@ -53,9 +56,19 @@ export default function TeamWorkspace({
   const [inviteEmail, setInviteEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  // libraryId -> set of userIds granted WRITE (no entry = read, the default).
+  const [grants, setGrants] = useState<Map<string, Set<string>>>(new Map());
+  const [manageLibId, setManageLibId] = useState<string | null>(null);
+  const [addFilesLib, setAddFilesLib] = useState<{ id: string; name: string } | null>(null);
 
   const myRole = useMemo(() => members.find((m) => m.userId === me?.id)?.role ?? "member", [members, me]);
   const isOwner = myRole === "owner" || myRole === "admin";
+  // Shared libraries the CURRENT user has been granted write on (lets a member add files).
+  const myWriteLibs = useMemo(() => {
+    const s = new Set<string>();
+    if (me?.id) for (const [lib, users] of grants) if (users.has(me.id)) s.add(lib);
+    return s;
+  }, [grants, me]);
 
   const flash = (kind: "ok" | "err", text: string) => {
     setNotice({ kind, text });
@@ -145,8 +158,23 @@ export default function TeamWorkspace({
             .select("id, library_id, shared_by_user_id, libraries(id, name, created_by_user_id)")
             .eq("organization_id", orgId)
         : Promise.resolve({ data: [], error: null });
+      const privP = orgId
+        ? supabase
+            .from("team_library_member_privileges")
+            .select("library_id, user_id, privilege")
+            .eq("organization_id", orgId)
+        : Promise.resolve({ data: [], error: null });
 
-      const [inv, myLib, sent, shared] = await Promise.all([invP, myLibP, sentP, sharedP]);
+      const [inv, myLib, sent, shared, privs] = await Promise.all([invP, myLibP, sentP, sharedP, privP]);
+
+      const g = new Map<string, Set<string>>();
+      for (const r of ((privs.data as Array<Record<string, unknown>>) || [])) {
+        if (String(r.privilege) !== "write") continue;
+        const lib = String(r.library_id);
+        if (!g.has(lib)) g.set(lib, new Set());
+        g.get(lib)!.add(String(r.user_id));
+      }
+      setGrants(g);
 
       // Members + their profiles come from a server route (service role) so names/emails/avatars
       // resolve even when users-table RLS would hide teammates or public.users is sparse.
@@ -365,6 +393,48 @@ export default function TeamWorkspace({
     }
   };
 
+  // Owner grants/revokes a member's WRITE access on one shared library. write=upsert, read=delete row.
+  const setPriv = async (libraryId: string, userId: string, write: boolean) => {
+    if (!teamId || !me) return;
+    setBusy(true);
+    try {
+      if (write) {
+        const { error } = await supabase.from("team_library_member_privileges").upsert(
+          {
+            organization_id: teamId,
+            library_id: libraryId,
+            user_id: userId,
+            privilege: "write",
+            granted_by_user_id: me.id,
+          },
+          { onConflict: "library_id,user_id" },
+        );
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("team_library_member_privileges")
+          .delete()
+          .eq("library_id", libraryId)
+          .eq("user_id", userId);
+        if (error) throw error;
+      }
+      setGrants((prev) => {
+        const next = new Map(prev);
+        const set = new Set(next.get(libraryId) ?? []);
+        if (write) set.add(userId);
+        else set.delete(userId);
+        next.set(libraryId, set);
+        return next;
+      });
+      flash("ok", write ? "Granted write access." : "Set to read-only.");
+    } catch (e) {
+      flash("err", "Couldn't update access.");
+      onLog?.({ level: "error", message: "Team: set privilege failed", details: e });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const selectedTeam = teams.find((t) => t.id === teamId) || null;
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -439,7 +509,7 @@ export default function TeamWorkspace({
             {myInvites.map((inv) => (
               <div key={inv.id} className="flex items-center justify-between gap-3 rounded-xl bg-black/20 px-3 py-2.5">
                 <div className="min-w-0 text-sm">
-                  You've been invited to join <span className="font-semibold text-white">{inv.orgName}</span>.
+                  You&apos;ve been invited to join <span className="font-semibold text-white">{inv.orgName}</span>.
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <button
@@ -574,29 +644,91 @@ export default function TeamWorkspace({
           <span className="rounded-full bg-white/8 px-2 py-0.5 text-[11px] text-white/50">{sharedLibs.length}</span>
         </h2>
         <p className="mb-3 text-[12px] text-white/45">
-          Libraries shared here are usable by the whole team in Team chat. Only the owner can unshare.
+          Everyone on the team can use a shared library in Team chat (read). The owner can grant a member
+          <span className="text-white/65"> write</span> access so they can also add files to it.
         </p>
 
         {sharedLibs.length > 0 ? (
           <div className="mb-4 space-y-1.5">
-            {sharedLibs.map((s) => (
-              <div key={s.shareId} className="flex items-center gap-3 rounded-xl bg-black/15 px-3 py-2">
-                <FiBox className="h-4 w-4 shrink-0 text-violet-300" />
-                <span className="min-w-0 flex-1 truncate text-sm text-white/85">{s.name}</span>
-                {s.ownerId === me?.id ? (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void unshareLib(s.shareId)}
-                    className="shrink-0 rounded-lg px-2 py-1 text-[11px] text-white/45 hover:bg-white/8 hover:text-white"
-                  >
-                    Unshare
-                  </button>
-                ) : (
-                  <span className="shrink-0 text-[10px] text-white/35">shared by teammate</span>
-                )}
-              </div>
-            ))}
+            {sharedLibs.map((s) => {
+              const owned = s.ownerId === me?.id;
+              const canWrite = myWriteLibs.has(s.libraryId);
+              const otherMembers = members.filter((m) => m.userId !== me?.id);
+              return (
+                <div key={s.shareId} className="rounded-xl bg-black/15">
+                  <div className="flex items-center gap-3 px-3 py-2">
+                    <FiBox className="h-4 w-4 shrink-0 text-violet-300" />
+                    <span className="min-w-0 flex-1 truncate text-sm text-white/85">{s.name}</span>
+                    {owned ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setManageLibId((p) => (p === s.libraryId ? null : s.libraryId))}
+                          className={`inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] transition ${
+                            manageLibId === s.libraryId ? "bg-violet-500/15 text-white" : "text-white/55 hover:bg-white/8 hover:text-white"
+                          }`}
+                        >
+                          <FiSliders className="h-3 w-3" /> Manage access
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void unshareLib(s.shareId)}
+                          className="shrink-0 rounded-lg px-2 py-1 text-[11px] text-white/45 hover:bg-white/8 hover:text-white"
+                        >
+                          Unshare
+                        </button>
+                      </>
+                    ) : canWrite ? (
+                      <button
+                        type="button"
+                        onClick={() => setAddFilesLib({ id: s.libraryId, name: s.name })}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/75 hover:border-violet-400/40 hover:text-white"
+                      >
+                        <FiPlus className="h-3 w-3" /> Add files
+                      </button>
+                    ) : (
+                      <span className="shrink-0 text-[10px] text-white/35">shared by teammate</span>
+                    )}
+                  </div>
+
+                  {owned && manageLibId === s.libraryId ? (
+                    <div className="space-y-1.5 border-t border-white/10 px-3 py-2">
+                      {otherMembers.length === 0 ? (
+                        <div className="text-[11px] text-white/40">No other members yet — invite teammates first.</div>
+                      ) : (
+                        otherMembers.map((m) => {
+                          const hasWrite = grants.get(s.libraryId)?.has(m.userId) ?? false;
+                          return (
+                            <div key={m.userId} className="flex items-center justify-between gap-2">
+                              <span className="min-w-0 flex-1 truncate text-xs text-white/75">{m.name || m.email}</span>
+                              <div className="flex shrink-0 overflow-hidden rounded-lg border border-white/10 text-[11px]">
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => void setPriv(s.libraryId, m.userId, false)}
+                                  className={`px-2.5 py-1 transition ${!hasWrite ? "bg-violet-500/20 text-white" : "text-white/55 hover:text-white"}`}
+                                >
+                                  Read
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => void setPriv(s.libraryId, m.userId, true)}
+                                  className={`px-2.5 py-1 transition ${hasWrite ? "bg-violet-500/20 text-white" : "text-white/55 hover:text-white"}`}
+                                >
+                                  Write
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div className="mb-4 rounded-xl border border-dashed border-white/10 px-3 py-4 text-center text-sm text-white/40">
@@ -623,6 +755,19 @@ export default function TeamWorkspace({
           </div>
         ) : null}
       </section>
+
+      {addFilesLib && teamId && (
+        <AddFilesModal
+          open={!!addFilesLib}
+          onClose={() => setAddFilesLib(null)}
+          organizationId={teamId}
+          library={addFilesLib}
+          currentUserId={me?.id ?? null}
+          allowDrive={false}
+          onStarted={() => flash("ok", "Files added — the library is processing them now.")}
+          onLog={onLog}
+        />
+      )}
     </div>
   );
 }

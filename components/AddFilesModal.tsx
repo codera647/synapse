@@ -14,6 +14,7 @@ export default function AddFilesModal({
   organizationId,
   library,
   currentUserId,
+  allowDrive = true,
   onStarted,
   onLog,
 }: {
@@ -22,6 +23,7 @@ export default function AddFilesModal({
   organizationId: string;
   library: { id: string; name: string };
   currentUserId?: string | null;
+  allowDrive?: boolean;
   onStarted?: (libraryId: string) => void;
   onLog?: LogFn;
 }) {
@@ -68,7 +70,10 @@ export default function AddFilesModal({
         const fd = new FormData();
         fd.append("organization_id", organizationId);
         fd.append("library_id", library.id);
-        if (currentUserId) fd.append("created_by_user_id", currentUserId);
+        if (currentUserId) {
+          fd.append("created_by_user_id", currentUserId);
+          fd.append("acting_user_id", currentUserId);
+        }
         localFiles.forEach((f) => fd.append("files", f));
         const res = await fetch("/api/library/add-files/upload", { method: "POST", body: fd });
         const j = await res.json().catch(() => ({}));
@@ -93,10 +98,16 @@ export default function AddFilesModal({
           library_id: library.id,
           mode: "files",
           file_ids: driveFiles.map((f) => f.id),
+          acting_user_id: currentUserId ?? null,
         });
       }
       if (rescan) {
-        await driveCall({ organization_id: organizationId, library_id: library.id, mode: "rescan" });
+        await driveCall({
+          organization_id: organizationId,
+          library_id: library.id,
+          mode: "rescan",
+          acting_user_id: currentUserId ?? null,
+        });
       }
 
       if (docIds.length === 0) {
@@ -108,7 +119,7 @@ export default function AddFilesModal({
       const commit = await fetch("/api/backend/library/add-files/commit", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ organization_id: organizationId, library_id: library.id, doc_ids: docIds }),
+        body: JSON.stringify({ organization_id: organizationId, library_id: library.id, doc_ids: docIds, acting_user_id: currentUserId ?? null }),
       });
       const cj = await commit.json().catch(() => ({}));
       if (!commit.ok || cj.error) throw new Error(cj.error || `Couldn't start processing (HTTP ${commit.status})`);
@@ -176,25 +187,27 @@ export default function AddFilesModal({
           />
         </div>
 
-        {/* Google Drive */}
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void pickDrive()}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:text-white"
-          >
-            <FiHardDrive className="h-3.5 w-3.5 text-violet-300" /> Pick Google Drive files
-          </button>
-          <button
-            type="button"
-            onClick={() => setRescan((v) => !v)}
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition ${
-              rescan ? "border-violet-400/50 bg-violet-500/15 text-white" : "border-white/10 bg-white/5 text-white/80 hover:text-white"
-            }`}
-          >
-            <FiRefreshCw className="h-3.5 w-3.5" /> Re-scan connected folder
-          </button>
-        </div>
+        {/* Google Drive (owner only — members can't use the owner's Drive connection) */}
+        {allowDrive ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void pickDrive()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:text-white"
+            >
+              <FiHardDrive className="h-3.5 w-3.5 text-violet-300" /> Pick Google Drive files
+            </button>
+            <button
+              type="button"
+              onClick={() => setRescan((v) => !v)}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition ${
+                rescan ? "border-violet-400/50 bg-violet-500/15 text-white" : "border-white/10 bg-white/5 text-white/80 hover:text-white"
+              }`}
+            >
+              <FiRefreshCw className="h-3.5 w-3.5" /> Re-scan connected folder
+            </button>
+          </div>
+        ) : null}
 
         {/* Staged items */}
         {(localFiles.length > 0 || driveFiles.length > 0 || rescan) && (

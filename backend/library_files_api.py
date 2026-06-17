@@ -50,13 +50,34 @@ def _max_upload_bytes() -> int:
 def _library(organization_id: str, library_id: str) -> dict:
     rows = (
         supabase.table("libraries")
-        .select("id, name, organization_id, total_batches")
+        .select("id, name, organization_id, total_batches, created_by_user_id")
         .eq("id", library_id).eq("organization_id", organization_id)
         .limit(1).execute().data or []
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Library not found.")
     return rows[0]
+
+
+def _can_write(library: dict, user_id: Optional[str]) -> bool:
+    """A user may add files to a library if they OWN it, or have been granted 'write' on it.
+    No grant row = read-only (the default for shared libraries)."""
+    if not user_id:
+        return False
+    if str(library.get("created_by_user_id") or "") == str(user_id):
+        return True
+    grant = (
+        supabase.table("team_library_member_privileges")
+        .select("privilege")
+        .eq("library_id", library["id"]).eq("user_id", user_id)
+        .limit(1).execute().data or []
+    )
+    return bool(grant and str(grant[0].get("privilege")) == "write")
+
+
+def _require_write(library: dict, user_id: Optional[str]) -> None:
+    if not _can_write(library, user_id):
+        raise HTTPException(status_code=403, detail="You don't have permission to add files to this library.")
 
 
 def _org_name(organization_id: str) -> str:
@@ -90,9 +111,11 @@ async def library_add_upload(
     organization_id: str = Form(...),
     library_id: str = Form(...),
     created_by_user_id: Optional[str] = Form(None),
+    acting_user_id: Optional[str] = Form(None),
     files: List[UploadFile] = File(...),
 ):
     lib = _library(organization_id, library_id)
+    _require_write(lib, acting_user_id or created_by_user_id)
     org_slug = slugify(_org_name(organization_id))
     lib_slug = slugify(lib.get("name") or "library")
     max_bytes = _max_upload_bytes()
@@ -131,6 +154,7 @@ class DriveAddRequest(BaseModel):
     library_id: str
     mode: str  # "files" | "rescan"
     file_ids: Optional[List[str]] = None
+    acting_user_id: Optional[str] = None
 
 
 def _drive_meta(access_token: str, file_id: str) -> dict:
@@ -146,7 +170,8 @@ def _drive_meta(access_token: str, file_id: str) -> dict:
 
 @router.post("/library/add-files/drive")
 def library_add_drive(req: DriveAddRequest):
-    _library(req.organization_id, req.library_id)
+    lib = _library(req.organization_id, req.library_id)
+    _require_write(lib, req.acting_user_id)
     src = _source(req.organization_id, req.library_id)
     access_token = get_access_token(src["refresh_token"])
     existing = _existing_drive_ids(req.library_id)
@@ -197,11 +222,13 @@ class CommitRequest(BaseModel):
     organization_id: str
     library_id: str
     doc_ids: List[str]
+    acting_user_id: Optional[str] = None
 
 
 @router.post("/library/add-files/commit")
 def library_add_commit(req: CommitRequest):
     lib = _library(req.organization_id, req.library_id)
+    _require_write(lib, req.acting_user_id)
     doc_ids = [d for d in (req.doc_ids or []) if d]
     if not doc_ids:
         raise HTTPException(status_code=400, detail="No new files to process.")

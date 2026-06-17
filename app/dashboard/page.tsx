@@ -32,6 +32,7 @@ type Library = {
     pipeline_error?: string | null;
     total_batches?: number | null;
     completed_batches?: number | null;
+    created_by_user_id?: string | null;
 };
 
 type Organization = {
@@ -77,6 +78,9 @@ function DashboardPageInner() {
     const [personalization, setPersonalization] = useState<Personalization | null>(null);
     const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
     const [addFilesLib, setAddFilesLib] = useState<Library | null>(null);
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    // Libraries (in the current org) the user has been granted write on, beyond ones they own.
+    const [writeLibSet, setWriteLibSet] = useState<Set<string>>(new Set());
     const [organizations, setOrganizations] = useState<Organization[]>([]);
     const [libraries, setLibraries] = useState<Library[]>([]);
     const [loading, setLoading] = useState(true);
@@ -195,7 +199,7 @@ function DashboardPageInner() {
 
             const { data: libs, error: libError } = await supabase
                 .from("libraries")
-                .select("id, name, status, created_at, updated_at, source_type, pipeline_status, pipeline_stage, pipeline_progress_percent, pipeline_error, total_batches, completed_batches")
+                .select("id, name, status, created_at, updated_at, source_type, pipeline_status, pipeline_stage, pipeline_progress_percent, pipeline_error, total_batches, completed_batches, created_by_user_id")
                 .eq("organization_id", orgData.id)
                 .order("created_at", { ascending: false });
 
@@ -203,6 +207,20 @@ function DashboardPageInner() {
                 console.error("Error fetching libraries:", libError);
             } else {
                 setLibraries(libs || []);
+            }
+
+            setCurrentUserId(user.id);
+            // Libraries in this org the user was granted write on (for the rare co-owner / shared case).
+            try {
+                const { data: grants } = await supabase
+                    .from("team_library_member_privileges")
+                    .select("library_id")
+                    .eq("organization_id", orgData.id)
+                    .eq("user_id", user.id)
+                    .eq("privilege", "write");
+                setWriteLibSet(new Set(((grants as Array<{ library_id: string }>) || []).map((g) => g.library_id)));
+            } catch {
+                setWriteLibSet(new Set());
             }
 
             setLoading(false);
@@ -268,7 +286,7 @@ function DashboardPageInner() {
 
         const { data: libs, error: libError } = await supabase
             .from("libraries")
-            .select("id, name, status, created_at, updated_at, source_type, pipeline_status, pipeline_stage, pipeline_progress_percent, pipeline_error, total_batches, completed_batches")
+            .select("id, name, status, created_at, updated_at, source_type, pipeline_status, pipeline_stage, pipeline_progress_percent, pipeline_error, total_batches, completed_batches, created_by_user_id")
             .eq("organization_id", orgId)
             .order("created_at", { ascending: false });
 
@@ -327,7 +345,7 @@ function DashboardPageInner() {
                 source_type: "google_drive",
                 source_folder_id: newLibrarySourceFolder.trim(),
             })
-            .select("id, name, status, created_at, updated_at, source_type, pipeline_status, pipeline_stage, pipeline_progress_percent, pipeline_error, total_batches, completed_batches")
+            .select("id, name, status, created_at, updated_at, source_type, pipeline_status, pipeline_stage, pipeline_progress_percent, pipeline_error, total_batches, completed_batches, created_by_user_id")
             .single();
 
         if (error) {
@@ -1057,6 +1075,10 @@ function DashboardPageInner() {
         );
     };
 
+    // A user can add files to a library if they OWN it or were granted write on it.
+    const canAddFiles = (library: Library) =>
+        (!!currentUserId && library.created_by_user_id === currentUserId) || writeLibSet.has(library.id);
+
     const getProgressPercent = (library: Library) => {
         if (typeof library.pipeline_progress_percent === "number") {
             return Math.max(0, Math.min(100, library.pipeline_progress_percent));
@@ -1404,6 +1426,7 @@ function DashboardPageInner() {
                                             </button>
                                         ) : (
                                             pipelineStatus === "completed" ? (
+                                            canAddFiles(lib) ? (
                                             <button
                                                 type="button"
                                                 title="Add files to this library"
@@ -1416,6 +1439,7 @@ function DashboardPageInner() {
                                             >
                                                 <FiPlus className="h-3.5 w-3.5" /> Add files
                                             </button>
+                                            ) : null
                                             ) : (
                                             <button
                                                 type="button"
@@ -1450,6 +1474,7 @@ function DashboardPageInner() {
                     onClose={() => setAddFilesLib(null)}
                     organizationId={currentOrg.id}
                     library={{ id: addFilesLib.id, name: addFilesLib.name }}
+                    currentUserId={currentUserId}
                     onStarted={(libraryId) => {
                         setLibraries((prev) =>
                             prev.map((l) =>
@@ -1780,6 +1805,7 @@ function DashboardPageInner() {
                         setDrawerOpen(false);
                     }
                 }}
+                canAddFiles={drawerLibrary ? canAddFiles(drawerLibrary) : false}
             />
         </div>
     );

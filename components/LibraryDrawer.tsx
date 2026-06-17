@@ -29,6 +29,7 @@ type Props = {
   onLog?: (entry: { level: "info" | "warn" | "error" | "success"; message: string; details?: unknown }) => void;
   onDeleted?: (libraryId: string) => void;
   onAddFiles?: () => void;
+  canAddFiles?: boolean;
 };
 
 function formatDate(value: string | null | undefined) {
@@ -88,7 +89,7 @@ function StatCard({
   );
 }
 
-export default function LibraryDrawer({ open, onClose, library, organizationId, supabase, onLog, onDeleted, onAddFiles }: Props) {
+export default function LibraryDrawer({ open, onClose, library, organizationId, supabase, onLog, onDeleted, onAddFiles, canAddFiles }: Props) {
   const [docsCount, setDocsCount] = useState<number | null>(null);
   const [embedCount, setEmbedCount] = useState<number | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
@@ -214,7 +215,7 @@ export default function LibraryDrawer({ open, onClose, library, organizationId, 
             </div>
 
             <div className="flex items-center gap-2">
-              {onAddFiles && library.pipeline_status === "completed" ? (
+              {onAddFiles && canAddFiles && library.pipeline_status === "completed" ? (
                 <button
                   type="button"
                   onClick={onAddFiles}
