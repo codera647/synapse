@@ -130,9 +130,13 @@ export default function AddFilesModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={() => !submitting && onClose()}>
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-[2px]"
+      onClick={() => !submitting && onClose()}
+    >
       <div
-        className="w-full max-w-lg rounded-2xl glass glass-hi p-5 shadow-2xl shadow-black/50"
+        className="w-full max-w-lg rounded-2xl border border-white/10 p-5 shadow-[0_20px_60px_rgba(0,0,0,0.55)]"
+        style={{ backgroundColor: "rgba(20, 25, 37, 0.98)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-1 flex items-start justify-between">
