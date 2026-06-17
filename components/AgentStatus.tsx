@@ -39,10 +39,50 @@ function useElapsed(startedAt?: number): number {
   return startedAt ? Math.max(0, Math.round((now - startedAt) / 1000)) : 0;
 }
 
+/** A spinning gradient ring with a soft pulsing halo — the "AI is thinking" orb. */
+export function ThinkingOrb({ size = 22 }: { size?: number }) {
+  return (
+    <span className="relative grid shrink-0 place-items-center" style={{ height: size, width: size }} aria-hidden>
+      <span className="gen-orb-halo absolute rounded-full bg-violet-500/40 blur-[4px]" style={{ height: size, width: size }} />
+      <span className="gen-orb-core rounded-full" style={{ height: size, width: size }} />
+    </span>
+  );
+}
+
+/** Staggered "equalizer" wave bars in a violet→fuchsia gradient. */
+export function WaveBars({ height = 13 }: { height?: number }) {
+  return (
+    <span className="flex items-end gap-[3px]" aria-hidden>
+      {[0, 1, 2, 3].map((i) => (
+        <span
+          key={i}
+          className="gen-bar w-[3px] rounded-full bg-gradient-to-b from-violet-300 to-fuchsia-300"
+          style={{ height, animationDelay: `${i * 0.13}s` }}
+        />
+      ))}
+    </span>
+  );
+}
+
 /**
- * Live "what the agent is doing" line shown while generating: a pulsing dot, the current stage
- * typed out character-by-character, a ticking elapsed timer, and a faint trail of the last few
- * completed stages.
+ * Beautiful "generating…" indicator: a spinning gradient ring, the status typed out with a
+ * shimmering gradient, and wave bars. Shared by the agent panel and (via AgentStatusLine) chat.
+ */
+export function GeneratingIndicator({ label, className = "" }: { label: string; className?: string }) {
+  const { value: typed } = useTypewriter(label || "Working");
+  return (
+    <div className={`flex items-center gap-2.5 ${className}`}>
+      <ThinkingOrb size={20} />
+      <span className="gen-shimmer-text text-sm font-medium">{typed}</span>
+      <WaveBars />
+    </div>
+  );
+}
+
+/**
+ * Live "what the agent is doing" line shown while generating: the thinking orb, the current stage
+ * typed out with a shimmering gradient, wave bars, a ticking elapsed timer, and a faint trail of
+ * the last few completed stages.
  */
 export function AgentStatusLine({
   stage,
@@ -60,16 +100,14 @@ export function AgentStatusLine({
   return (
     <div className="rounded-2xl rounded-tl-md glass px-4 py-3">
       <div className="flex items-center gap-2.5">
-        <span className="relative grid h-5 w-5 shrink-0 place-items-center">
-          <span className="absolute h-5 w-5 rounded-full bg-violet-400/20 animate-ping" />
-          <span className="h-2 w-2 rounded-full bg-gradient-to-br from-violet-300 to-fuchsia-300" />
-        </span>
-        <span className="text-sm text-white/85">
+        <ThinkingOrb size={20} />
+        <span className="gen-shimmer-text text-sm font-medium">
           {typed}
           {typing ? (
-            <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-[2px] rounded-full bg-violet-300 align-middle" />
+            <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-[2px] rounded-full bg-fuchsia-300 align-middle" />
           ) : null}
         </span>
+        <WaveBars />
         {elapsed > 0 ? (
           <span className="ml-auto shrink-0 text-[11px] tabular-nums text-white/35">{elapsed}s</span>
         ) : null}

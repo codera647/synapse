@@ -6,6 +6,7 @@ import {
   FiAlertTriangle, FiArrowUp, FiBarChart2, FiBox, FiCheck, FiClock, FiFileText, FiFile, FiImage, FiPaperclip, FiPlus, FiX, FiZap,
 } from "react-icons/fi";
 import AgentArtifact, { type AgentArtifactData } from "@/components/AgentArtifact";
+import { GeneratingIndicator } from "@/components/AgentStatus";
 import AgentArtifactsDrawer from "@/components/AgentArtifactsDrawer";
 import ChatMarkdown from "@/components/ChatMarkdown";
 
@@ -523,17 +524,16 @@ export default function AgentPanel({
                 <div className="mt-2 relative h-64 w-64 max-w-full overflow-hidden rounded-xl border border-white/10">
                   <div className="absolute inset-0 agent-img-shimmer" />
                   <div className="absolute inset-0 grid place-items-center">
-                    <div className="flex flex-col items-center gap-2 text-xs text-white/75">
+                    <div className="flex flex-col items-center gap-2.5">
                       <FiImage className="h-6 w-6 animate-pulse text-violet-200" />
-                      {status || "Generating image…"}
+                      <span className="gen-shimmer-text text-xs font-medium">{status || "Generating image…"}</span>
                     </div>
                   </div>
                 </div>
               </div>
             ) : running ? (
-              <div className="flex items-center gap-2 text-xs text-white/55">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-violet-400" />
-                {status || "Working…"}
+              <div className="inline-flex rounded-2xl rounded-tl-md glass px-4 py-3">
+                <GeneratingIndicator label={status || "Working…"} />
               </div>
             ) : null}
           </div>
