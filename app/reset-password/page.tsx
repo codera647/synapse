@@ -27,33 +27,50 @@ function ResetPasswordInner() {
         let cancelled = false;
 
         const establish = async () => {
-            const errorDescription = searchParams.get("error_description") || searchParams.get("error");
+            // Supabase returns verify errors in the URL HASH (#error=...&error_description=...),
+            // not the query string — read both so we surface the real reason.
+            const hashStr = window.location.hash.startsWith("#")
+                ? window.location.hash.slice(1)
+                : window.location.hash;
+            const hp = new URLSearchParams(hashStr);
+            const errorDescription =
+                searchParams.get("error_description") ||
+                searchParams.get("error") ||
+                hp.get("error_description") ||
+                hp.get("error");
             if (errorDescription) {
                 setPhase("invalid");
                 setErrorMsg(getFriendlyAuthError(errorDescription));
                 return;
             }
 
-            // Recovery links may arrive as a hashed OTP (?token_hash=...&type=recovery) — verify it.
-            const tokenHash = searchParams.get("token_hash");
-            const type = parseOtpType(searchParams.get("type"));
-            try {
-                if (tokenHash && type) {
-                    const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
-                    if (error) throw error;
-                }
-            } catch {
-                if (!cancelled) {
+            // Already in a recovery/auth session (e.g. page refresh)? Show the form straight away.
+            const { data: existing } = await supabase.auth.getSession();
+            if (existing.session) {
+                if (!cancelled) setPhase("ready");
+                return;
+            }
+
+            // Preferred flow: a hashed OTP token (?token_hash=...&type=recovery). verifyOtp is a POST,
+            // so email link-scanners that pre-fetch (GET) the link can't burn the token.
+            const tokenHash = searchParams.get("token_hash") || hp.get("token_hash");
+            const type = parseOtpType(searchParams.get("type") || hp.get("type"));
+            if (tokenHash && type) {
+                const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
+                if (cancelled) return;
+                if (error) {
                     setPhase("invalid");
-                    setErrorMsg("This reset link is invalid or has expired. Request a new one.");
+                    setErrorMsg(getFriendlyAuthError(error.message));
+                    return;
                 }
+                setPhase("ready");
                 return;
             }
 
             // Otherwise the SSR client auto-exchanges a ?code= / #access_token (detectSessionInUrl).
-            // Either way, wait for a session to appear.
+            // Wait for a session to appear.
             const startedAt = Date.now();
-            while (!cancelled && Date.now() - startedAt < 6000) {
+            while (!cancelled && Date.now() - startedAt < 8000) {
                 const {
                     data: { session },
                 } = await supabase.auth.getSession();
@@ -65,7 +82,7 @@ function ResetPasswordInner() {
             }
             if (!cancelled) {
                 setPhase("invalid");
-                setErrorMsg("This reset link is invalid or has expired. Request a new one.");
+                setErrorMsg("This reset link is invalid or has already been used. Request a new one.");
             }
         };
 

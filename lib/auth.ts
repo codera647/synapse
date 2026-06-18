@@ -42,6 +42,15 @@ export function getFriendlyAuthError(message?: string | null) {
         return "Invalid email or password.";
     }
 
+    if (
+        normalized.includes("otp_expired") ||
+        normalized.includes("invalid or has expired") ||
+        normalized.includes("access_denied") ||
+        (normalized.includes("expired") && normalized.includes("link"))
+    ) {
+        return "This link has expired or was already used. Request a new one — and open it in the same browser, on a device without corporate email link-scanning if possible.";
+    }
+
     if (normalized.includes("email not confirmed")) {
         return "Your email is not confirmed yet. Please confirm it from your inbox.";
     }
