@@ -30,6 +30,9 @@ function LoginPageInner() {
         if (searchParams.get("checkEmail") === "1") {
             return "Check your email to confirm your account, then sign in.";
         }
+        if (searchParams.get("reset") === "1") {
+            return "Your password was updated. Sign in with your new password.";
+        }
 
         return null;
     }, [searchParams]);
@@ -170,7 +173,15 @@ function LoginPageInner() {
                         </div>
 
                         <div>
-                            <label className="block text-xs font-medium text-white/70 mb-1.5">Password</label>
+                            <div className="mb-1.5 flex items-center justify-between">
+                                <label className="block text-xs font-medium text-white/70">Password</label>
+                                <Link
+                                    href="/forgot-password"
+                                    className="text-xs font-medium text-violet-300 hover:text-violet-200 transition-colors"
+                                >
+                                    Forgot password?
+                                </Link>
+                            </div>
                             <div className="relative">
                                 <input
                                     type={showPassword ? "text" : "password"}
