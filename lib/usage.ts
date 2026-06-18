@@ -9,14 +9,22 @@ function monthStartISO(): string {
   return new Date(d.getFullYear(), d.getMonth(), 1).toISOString();
 }
 
-/** Every organization id the current user belongs to (owner or member). Empty if signed out. */
+/**
+ * Organization ids the current user OWNS (role = owner). Usage limits are an individual, per-user
+ * profile: they pool across the user's OWN organizations only — never a teammate's org the user is
+ * merely a member of (that org's resources belong to its owner, not this user). Empty if signed out.
+ */
 export async function getUserOrgIds(supabase: SupabaseClient): Promise<string[]> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
   const uid = user?.id;
   if (!uid) return [];
-  const { data } = await supabase.from("organization_members").select("organization_id").eq("user_id", uid);
+  const { data } = await supabase
+    .from("organization_members")
+    .select("organization_id")
+    .eq("user_id", uid)
+    .eq("role", "owner");
   const ids = ((data as Array<{ organization_id: string | null }>) || [])
     .map((r) => r.organization_id)
     .filter(Boolean) as string[];
