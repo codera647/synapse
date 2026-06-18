@@ -29,6 +29,7 @@ type Props = {
   onLog?: (entry: { level: "info" | "warn" | "error" | "success"; message: string; details?: unknown }) => void;
   onDeleted?: (libraryId: string) => void;
   onAddFiles?: () => void;
+  onRetry?: () => void;
   canAddFiles?: boolean;
 };
 
@@ -48,6 +49,10 @@ function pct(v: number | null | undefined) {
 // legacy messages so the user never sees a CUDA stack trace.
 function friendlyError(raw: string): string {
   const s = (raw || "").toLowerCase();
+  if (s.includes("googleapis.com/drive") || s.includes("drive/v3/files") || (s.includes("drive") && s.includes("400")))
+    return "Couldn't read the source folder from Google Drive. If this is a local (desktop) library, click Retry to reprocess the files you uploaded.";
+  if (s.includes("503") || s.includes("502") || s.includes("bad gateway") || s.includes("service unavailable"))
+    return "The server was busy and an upload didn't complete. Click Retry to process the files again.";
   if (s.includes("out of memory") || (s.includes("cuda") && s.includes("memory")))
     return "Ran out of GPU memory on a processing stage. Lower that stage's workers in Settings → Processing, then click Resume — finished stages are kept.";
   if (s.includes("rate limit") || s.includes("quota") || s.includes("429"))
@@ -89,13 +94,14 @@ function StatCard({
   );
 }
 
-export default function LibraryDrawer({ open, onClose, library, organizationId, supabase, onLog, onDeleted, onAddFiles, canAddFiles }: Props) {
+export default function LibraryDrawer({ open, onClose, library, organizationId, supabase, onLog, onDeleted, onAddFiles, onRetry, canAddFiles }: Props) {
   const [docsCount, setDocsCount] = useState<number | null>(null);
   const [embedCount, setEmbedCount] = useState<number | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [showErrDetails, setShowErrDetails] = useState(false);
 
   const libId = library?.id ?? null;
 
@@ -207,9 +213,41 @@ export default function LibraryDrawer({ open, onClose, library, organizationId, 
                 <span className="text-[11px] text-gray-500">{Math.round(pct(library.pipeline_progress_percent))}%</span>
               </div>
               {library.pipeline_error ? (
-                <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-                  <FiAlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>{friendlyError(library.pipeline_error)}</span>
+                <div className="mt-2.5 rounded-xl border border-red-500/25 bg-red-500/[0.08] p-3">
+                  <div className="flex items-start gap-2.5">
+                    <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-red-500/15 text-red-300">
+                      <FiAlertTriangle className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-semibold text-red-100">Processing didn&apos;t finish</div>
+                      <p className="mt-0.5 text-xs leading-relaxed text-red-200/90">
+                        {friendlyError(library.pipeline_error)}
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {onRetry ? (
+                          <button
+                            type="button"
+                            onClick={onRetry}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/30 bg-red-500/15 px-2.5 py-1 text-[11px] font-medium text-red-100 transition-colors hover:bg-red-500/25"
+                          >
+                            <FiRefreshCcw className="h-3 w-3" /> Retry processing
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => setShowErrDetails((v) => !v)}
+                          className="text-[11px] text-red-200/70 underline-offset-2 hover:text-red-100 hover:underline"
+                        >
+                          {showErrDetails ? "Hide details" : "Show details"}
+                        </button>
+                      </div>
+                      {showErrDetails ? (
+                        <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[10px] leading-relaxed text-red-200/70">
+                          {library.pipeline_error}
+                        </pre>
+                      ) : null}
+                    </div>
+                  </div>
                 </div>
               ) : null}
             </div>

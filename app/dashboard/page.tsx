@@ -519,10 +519,63 @@ function DashboardPageInner() {
         setActiveLibraryLastSync(null);
     };
 
+    // Local (desktop) libraries have no Drive folder to sync — reprocess their already-uploaded files
+    // through the same commit path instead of hitting the Google Drive sync (which would 400).
+    const reprocessLocalLibrary = async (lib: Library) => {
+        if (!currentOrg) return;
+        setStartingLibraryIds((prev) => new Set(prev).add(lib.id));
+        setSyncError(null);
+        setSyncSuccess(null);
+        try {
+            const { data: docs } = await supabase.from("documents").select("id").eq("library_id", lib.id);
+            const docIds = ((docs as Array<{ id: string }>) || []).map((d) => String(d.id));
+            if (docIds.length === 0) {
+                setSyncError("This library has no uploaded files yet. Delete it and re-create it from the folder.");
+                return;
+            }
+            const { data: ownerRes } = await supabase.auth.getUser();
+            const commit = await fetch("/api/backend/library/add-files/commit", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    organization_id: currentOrg.id,
+                    library_id: lib.id,
+                    doc_ids: docIds,
+                    acting_user_id: ownerRes?.user?.id ?? null,
+                }),
+            });
+            const cj = await commit.json().catch(() => ({}));
+            if (!commit.ok || cj.error) {
+                setSyncError(cj.error || `Couldn't start processing (HTTP ${commit.status}).`);
+                return;
+            }
+            setSyncSuccess("Reprocessing queued.");
+            setLibraries((prev) =>
+                prev.map((l) =>
+                    l.id === lib.id ? { ...l, pipeline_status: "queued", status: "processing", pipeline_error: null } : l,
+                ),
+            );
+            startLibraryStatusPolling(lib.id);
+        } catch {
+            setSyncError("Unable to start reprocessing.");
+        } finally {
+            setStartingLibraryIds((prev) => {
+                const next = new Set(prev);
+                next.delete(lib.id);
+                return next;
+            });
+        }
+    };
+
     const handleSyncLibrary = async (libraryOverride?: Library) => {
         const targetLibrary = libraryOverride ?? activeLibrary;
         if (!targetLibrary || !currentOrg) {
             setSyncError("Please select a library and organization.");
+            return;
+        }
+
+        if ((targetLibrary.source_type ?? "").toLowerCase() === "local") {
+            await reprocessLocalLibrary(targetLibrary);
             return;
         }
 
@@ -577,6 +630,11 @@ function DashboardPageInner() {
         const targetLibrary = libraryOverride ?? activeLibrary;
         if (!targetLibrary || !currentOrg) {
             setSyncError("Please select a library and organization.");
+            return;
+        }
+
+        if ((targetLibrary.source_type ?? "").toLowerCase() === "local") {
+            await reprocessLocalLibrary(targetLibrary);
             return;
         }
 
@@ -1992,6 +2050,9 @@ function DashboardPageInner() {
                         setAddFilesLib(drawerLibrary);
                         setDrawerOpen(false);
                     }
+                }}
+                onRetry={() => {
+                    if (drawerLibrary) void handleResumeLibrary(drawerLibrary);
                 }}
                 canAddFiles={drawerLibrary ? canAddFiles(drawerLibrary) : false}
             />
