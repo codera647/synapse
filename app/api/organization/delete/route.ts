@@ -1,15 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabaseAdmin";
-
-function getBackendBaseUrl() {
-    return (
-        process.env.RUNPOD_API_URL ||
-        process.env.BACKEND_API_URL ||
-        process.env.NEXT_PUBLIC_BACKEND_API_URL ||
-        process.env.NEXT_PUBLIC_RUNPOD_API_URL ||
-        ""
-    ).trim().replace(/\/+$/, "");
-}
+import { getBackendBaseUrl } from "@/lib/backend-url";
 
 function slugify(value: string) {
     return value
@@ -67,7 +58,7 @@ export async function POST(req: Request) {
         `agent-uploads/${orgId}/`,
         ...runIds.slice(0, 2000).map((r) => `agents/${r}/`),
     ];
-    const backend = getBackendBaseUrl();
+    const backend = await getBackendBaseUrl();
     const r2Warnings: { status: number; body?: string }[] = [];
     if (backend) {
         try {

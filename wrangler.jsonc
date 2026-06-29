@@ -16,6 +16,14 @@
     "enabled": true
   },
 
+  // KV namespace holding the live backend tunnel URL (key: synapse_backend), written
+  // by the VM's synapse-tunnel service on every boot/reconnect. lib/backend-url.ts reads
+  // it at request time so the URL is always current with no redeploys (falls back to the
+  // BACKEND_API_URL var if empty).
+  "kv_namespaces": [
+    { "binding": "TUNNELS", "id": "368d9dbfc98b4eb4b7f1223e4f4a1216" }
+  ],
+
   // Cloudflare Email Service binding for transactional team-invitation emails.
   // Requires onboarding a real domain first: `npx wrangler email sending enable <yourdomain>`
   // (sets up DKIM/SPF). Then set the Worker var TEAM_INVITE_FROM=invites@<yourdomain>.

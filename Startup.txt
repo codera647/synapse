@@ -16,3 +16,5 @@ sudo pkill -9 -f "_worker.py"
 # 3. Confirm nothing is left and the GPU is freed
 ps -ef | grep -E "[_]worker.py|worker_bootstrap"
 nvidia-smi
+
+<YOUR_CLOUDFLARE_API_TOKEN>

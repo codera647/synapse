@@ -1,23 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getBackendBaseUrl } from "@/lib/backend-url";
 
 // Dedicated BINARY proxy for source PDFs. The generic /api/backend/[...path] proxy reads bodies
 // as text (fine for JSON), which would corrupt PDF bytes — so the in-app PDF viewer fetches here
 // instead. Keeps BACKEND_API_URL server-side and streams the file through unchanged.
 
-function backendBase() {
-    return (
-        process.env.BACKEND_API_URL ||
-        process.env.RUNPOD_API_URL ||
-        process.env.NEXT_PUBLIC_BACKEND_API_URL ||
-        process.env.NEXT_PUBLIC_RUNPOD_API_URL ||
-        ""
-    )
-        .trim()
-        .replace(/\/+$/, "");
-}
-
 export async function GET(request: NextRequest) {
-    const base = backendBase();
+    const base = await getBackendBaseUrl();
     if (!base) {
         return NextResponse.json({ error: "Backend URL not configured." }, { status: 500 });
     }

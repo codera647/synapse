@@ -1,17 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getBackendBaseUrl } from "@/lib/backend-url";
 
-function getBackendBaseUrl() {
-    return (
-        process.env.RUNPOD_API_URL ||
-        process.env.BACKEND_API_URL ||
-        process.env.NEXT_PUBLIC_BACKEND_API_URL ||
-        process.env.NEXT_PUBLIC_RUNPOD_API_URL ||
-        ""
-    ).trim().replace(/\/+$/, "");
-}
-
-function buildTargetUrl(path: string[] = [], search = "") {
-    const base = getBackendBaseUrl();
+async function buildTargetUrl(path: string[] = [], search = "") {
+    const base = await getBackendBaseUrl();
     if (!base) return null;
     const cleanPath = path.map((part) => encodeURIComponent(part)).join("/");
     const url = cleanPath ? `${base}/${cleanPath}` : base;
@@ -19,7 +10,7 @@ function buildTargetUrl(path: string[] = [], search = "") {
 }
 
 async function proxy(request: NextRequest, method: "GET" | "POST", path: string[]) {
-    const target = buildTargetUrl(path, request.nextUrl.search);
+    const target = await buildTargetUrl(path, request.nextUrl.search);
     if (!target) {
         return NextResponse.json(
             {

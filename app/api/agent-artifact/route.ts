@@ -1,23 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getBackendBaseUrl } from "@/lib/backend-url";
 
 // Binary/JSON proxy for Agent-mode artifacts (rendered chart PNGs + Vega-Lite spec JSON from R2).
 // The generic text proxy would corrupt PNG bytes, so artifacts stream through here. Keeps
 // BACKEND_API_URL server-side. Only `agents/` keys are allowed (enforced again on the backend).
 
-function backendBase() {
-    return (
-        process.env.BACKEND_API_URL ||
-        process.env.RUNPOD_API_URL ||
-        process.env.NEXT_PUBLIC_BACKEND_API_URL ||
-        process.env.NEXT_PUBLIC_RUNPOD_API_URL ||
-        ""
-    )
-        .trim()
-        .replace(/\/+$/, "");
-}
-
 export async function GET(request: NextRequest) {
-    const base = backendBase();
+    const base = await getBackendBaseUrl();
     if (!base) {
         return NextResponse.json({ error: "Backend URL not configured." }, { status: 500 });
     }

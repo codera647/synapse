@@ -1,23 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getBackendBaseUrl } from "@/lib/backend-url";
 
 // Multipart proxy for adding LOCAL files to an existing library. The generic /api/backend text proxy
 // reads the body as text (corrupts binary multipart), so uploads stream their FormData through here to
 // the backend's POST /library/add-files/upload (which writes to R2 + creates documents).
 
-function backendBase() {
-    return (
-        process.env.BACKEND_API_URL ||
-        process.env.RUNPOD_API_URL ||
-        process.env.NEXT_PUBLIC_BACKEND_API_URL ||
-        process.env.NEXT_PUBLIC_RUNPOD_API_URL ||
-        ""
-    )
-        .trim()
-        .replace(/\/+$/, "");
-}
-
 export async function POST(request: NextRequest) {
-    const base = backendBase();
+    const base = await getBackendBaseUrl();
     if (!base) {
         return NextResponse.json({ error: "Backend URL not configured." }, { status: 500 });
     }

@@ -1,15 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabaseAdmin";
-
-function getBackendBaseUrl() {
-    return (
-        process.env.RUNPOD_API_URL ||
-        process.env.BACKEND_API_URL ||
-        process.env.NEXT_PUBLIC_BACKEND_API_URL ||
-        process.env.NEXT_PUBLIC_RUNPOD_API_URL ||
-        ""
-    ).trim().replace(/\/+$/, "");
-}
+import { getBackendBaseUrl } from "@/lib/backend-url";
 
 function slugify(value: string) {
     return value
@@ -97,7 +88,7 @@ export async function POST(req: Request) {
     // R2 cleanup is BEST-EFFORT — never block removing the library (and its DB rows + embeddings,
     // already deleted above) on R2 being reachable. Any failures come back as warnings so leftover
     // objects can be swept later, but the library always disappears for the user.
-    const backend = getBackendBaseUrl();
+    const backend = await getBackendBaseUrl();
     let r2Warnings: { prefix: string; status: number; body?: string }[] = [];
     if (backend) {
         const prefixesToDelete = [prefix, ...stagePrefixes];

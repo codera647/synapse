@@ -1,23 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getBackendBaseUrl } from "@/lib/backend-url";
 
 // Binary proxy for inline answer visuals (figure/table PNGs from R2). Same rationale as /api/pdf:
 // the generic text proxy would corrupt image bytes, so we stream them through here and keep
 // BACKEND_API_URL server-side.
 
-function backendBase() {
-    return (
-        process.env.BACKEND_API_URL ||
-        process.env.RUNPOD_API_URL ||
-        process.env.NEXT_PUBLIC_BACKEND_API_URL ||
-        process.env.NEXT_PUBLIC_RUNPOD_API_URL ||
-        ""
-    )
-        .trim()
-        .replace(/\/+$/, "");
-}
-
 export async function GET(request: NextRequest) {
-    const base = backendBase();
+    const base = await getBackendBaseUrl();
     if (!base) {
         return NextResponse.json({ error: "Backend URL not configured." }, { status: 500 });
     }

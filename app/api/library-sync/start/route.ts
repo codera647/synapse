@@ -1,18 +1,9 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabaseAdmin";
-
-function getBackendBaseUrl() {
-    return (
-        process.env.RUNPOD_API_URL ||
-        process.env.BACKEND_API_URL ||
-        process.env.NEXT_PUBLIC_BACKEND_API_URL ||
-        process.env.NEXT_PUBLIC_RUNPOD_API_URL ||
-        ""
-    ).trim().replace(/\/+$/, "");
-}
+import { getBackendBaseUrl } from "@/lib/backend-url";
 
 async function checkBackendAvailable() {
-    const base = getBackendBaseUrl();
+    const base = await getBackendBaseUrl();
     if (!base) {
         return {
             ok: false as const,
