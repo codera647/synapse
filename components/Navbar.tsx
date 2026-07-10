@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { FaGithub, FaStar } from "react-icons/fa";
+import { FaGithub } from "react-icons/fa";
 import { FiUser, FiSettings, FiZap, FiLogOut } from "react-icons/fi";
 import { useEffect, useRef, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
@@ -116,10 +116,7 @@ export default function Navbar() {
                         className="hidden sm:flex items-center gap-2 text-white/55 hover:text-white transition-colors"
                     >
                         <FaGithub className="w-5 h-5" />
-                        <span className="flex items-center gap-1">
-                            <FaStar className="w-3 h-3 text-yellow-400" />
-                            <span>1.2K</span>
-                        </span>
+                        <span>GitHub</span>
                     </a>
 
                     {loading ? (
