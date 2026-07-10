@@ -28,6 +28,7 @@ Turn a pile of PDFs into a multi-tenant research assistant that **plans**, **ret
 - [Data model](#data-model)
 - [Tech stack](#tech-stack)
 - [Repository layout](#repository-layout)
+- [Evaluation](#evaluation)
 - [Getting started](#getting-started)
 - [Deployment](#deployment)
 - [Configuration](#configuration)
@@ -294,6 +295,22 @@ synapse/
 └─ docs/                     # design docs, deploy guides, SQL migrations
 ```
 
+**Reviewing the code?** The agentic core reads best in this order:
+1. `backend/chat_api.py` — the `/chat` orchestrator: how a request flows through the six stages
+2. `backend/chat_agents.py` — the planner (query classification + decomposition), curiosity loop, and completeness critic
+3. `backend/chat_runtime.py` — retrieval, reranking, and evidence-brief construction the agents operate on
+4. `backend/eval/` — the evaluation harness (see [Evaluation](#evaluation))
+
+The LLM decides *what* to do (query class, sub-questions, evidence sufficiency, gap detection); the runtime bounds *how far* it can go (hop limits, critic rounds, and breadth are hard caps set by the thinking mode — bounded autonomy, not open-ended agency).
+
+---
+
+## Evaluation
+
+`backend/eval/` is a full evaluation harness that reproduces **DOUBLE-BENCH**'s methodology on Synapse — page-level **hit@k** retrieval scoring and **LLM-as-judge** answer accuracy (dual judge: gpt-4o + gpt-5.5) — plus **RAGAS**, **citation accuracy**, **honesty/overconfidence**, and **latency/throughput** metrics, with a hard budget cap so a full run costs ~$15.
+
+It exercises the *real* pipeline end to end: sampled benchmark documents are ingested through layout parsing, VLM captioning, chunking, and embedding before a single query is scored. A benchmark run on the 50-doc English subset is the current roadmap item; harness design and per-metric details are in [`backend/eval/README.md`](backend/eval/README.md).
+
 ---
 
 ## Getting started
@@ -400,7 +417,7 @@ The retrieval layer is adapted from an analytical reading of recent work (see [`
 
 ## License
 
-[Add a license, e.g. MIT] — see `LICENSE`.
+MIT — see [`LICENSE`](LICENSE).
 
 <div align="center">
 
